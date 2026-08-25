@@ -47,6 +47,13 @@ pdfops stamp -text "seen 25 August" -at top-right -bold notes.pdf seen.pdf
 pdfops sanitize downloaded.pdf safe.pdf
 pdfops flatten filled-form.pdf final.pdf
 pdfops strip -annotations -bookmarks private.pdf clean.pdf
+pdfops compress fat.pdf lean.pdf
+pdfops encrypt -user letmein -allow print,copy plain.pdf locked.pdf
+pdfops -password letmein decrypt locked.pdf plain.pdf
+pdfops -password letmein permissions locked.pdf
+pdfops text paper.pdf
+pdfops text -layout -pages 1 paper.pdf
+pdfops images paper.pdf pictures/
 pdfops info file.pdf
 ```
 
@@ -54,7 +61,13 @@ A page range is written `1-3,7,10-` and may say `all`, `even`, `odd` or
 `last`. It keeps its own order and its own repeats, so `select -pages 3-1`
 reverses three pages and `select -pages 1,1` gives you two copies.
 
-`-password` opens an encrypted file; what is written out is not encrypted.
+`-password` opens an encrypted file.
+
+`text` reads the page back as words, and `-layout` says where every piece of
+it sits — a page, a place, a size, and what it says. A piece the document
+gave no way to read comes back marked rather than guessed at, so you can tell
+a page that says nothing from one that could not be read. `images` writes out
+the pictures a page places, a JPEG as a JPEG.
 
 Links and bookmarks are carried over and pointed at the pages they became
 here, so extracting three pages of a book leaves the links between those
