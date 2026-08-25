@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-pdfkit/extract"
 	"github.com/go-pdfkit/ops"
 	"github.com/go-pdfkit/reader"
 )
@@ -633,6 +634,215 @@ func TestTheVerbsThatProtectRefuseWhatTheyShould(t *testing.T) {
 	for _, allow := range []string{"", "all", "none", "print, copy"} {
 		if code, _, errOut := exec("encrypt", "-user", "u", "-allow", allow, in, out); code != 0 {
 			t.Errorf("-allow %q said %d: %s", allow, code, errOut)
+		}
+	}
+}
+
+// pageWithText writes a document whose page carries real text and a picture,
+// so that reading it back can be checked.
+func pageWithText(t *testing.T) string {
+	t.Helper()
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	widths := make(reader.Array, 0, 224)
+	for i := 32; i < 256; i++ {
+		widths = append(widths, reader.Integer(500))
+	}
+	font := w.Add(reader.Dict{
+		"Type": reader.Name("Font"), "Subtype": reader.Name("Type1"),
+		"BaseFont": reader.Name("Helvetica"), "FirstChar": reader.Integer(32),
+		"LastChar": reader.Integer(255), "Widths": widths,
+		"Encoding": reader.Name("WinAnsiEncoding"),
+	})
+	image := w.Add(&reader.Stream{Dict: reader.Dict{
+		"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+		"Width": reader.Integer(2), "Height": reader.Integer(2),
+		"ColorSpace": reader.Name("DeviceGray"), "BitsPerComponent": reader.Integer(8),
+	}, Raw: []byte{0, 64, 128, 255}})
+	jpeg := w.Add(&reader.Stream{Dict: reader.Dict{
+		"Subtype": reader.Name("Image"), "Width": reader.Integer(1),
+		"Height": reader.Integer(1), "Filter": reader.Name("DCTDecode"),
+	}, Raw: []byte("pretend")})
+	kids := make(reader.Array, 0, 2)
+	for i := 1; i <= 2; i++ {
+		content := fmt.Sprintf("BT /F1 12 Tf 20 100 Td (page %d says hello) Tj ET "+
+			"q 20 0 0 20 10 10 cm /Im Do Q q 5 0 0 5 50 50 cm /Jp Do Q", i)
+		kids = append(kids, w.Add(reader.Dict{
+			"Type": reader.Name("Page"), "Parent": pagesRef,
+			"MediaBox": reader.Array{reader.Integer(0), reader.Integer(0),
+				reader.Integer(200), reader.Integer(200)},
+			"Contents": w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte(content)}),
+			"Resources": reader.Dict{
+				"Font":    reader.Dict{"F1": font},
+				"XObject": reader.Dict{"Im": image, "Jp": jpeg},
+			},
+		}))
+	}
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": kids, "Count": reader.Integer(len(kids))})
+	root := w.Add(reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef})
+	out, err := w.Finish(reader.Dict{"Root": root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "text.pdf")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestTextVerb(t *testing.T) {
+	in := pageWithText(t)
+	code, out, errOut := exec("text", in)
+	if code != 0 {
+		t.Fatalf("text said %d: %s", code, errOut)
+	}
+	for _, want := range []string{"page 1 says hello", "page 2 says hello"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the text does not hold %q:\n%s", want, out)
+		}
+	}
+	if _, out, _ = exec("text", "-pages", "2", in); strings.Contains(out, "page 1") {
+		t.Errorf("a range of one page gave:\n%s", out)
+	}
+	// The layout form says where every piece sits.
+	code, out, errOut = exec("text", "-layout", "-pages", "1", in)
+	if code != 0 {
+		t.Fatalf("text -layout said %d: %s", code, errOut)
+	}
+	if !strings.Contains(out, "\t20.00\t100.00\t12.00\t") {
+		t.Errorf("the layout does not say where the text is:\n%s", out)
+	}
+	for _, args := range [][]string{
+		{"text"},
+		{"text", "nowhere.pdf"},
+		{"text", "-nope", in},
+		{"text", "-pages", "nonsense", in},
+	} {
+		if code, _, _ := exec(args...); code == 0 {
+			t.Errorf("%v was accepted", args)
+		}
+	}
+}
+
+func TestTextVerbSaysWhatItCouldNotRead(t *testing.T) {
+	// A run nothing in the document could name is marked rather than left
+	// out, and so is one drawn with no ink.
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	font := w.Add(reader.Dict{
+		"Type": reader.Name("Font"), "Subtype": reader.Name("Type1"),
+		"FontDescriptor": w.Add(reader.Dict{"Flags": reader.Integer(4)}),
+	})
+	page := w.Add(reader.Dict{
+		"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox": reader.Array{reader.Integer(0), reader.Integer(0),
+			reader.Integer(200), reader.Integer(200)},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{},
+			Raw: []byte("BT 3 Tr /F1 12 Tf 20 100 Td (\x01\x02) Tj ET")}),
+		"Resources": reader.Dict{"Font": reader.Dict{"F1": font}},
+	})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{page}, "Count": reader.Integer(1)})
+	root := w.Add(reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef})
+	out, err := w.Finish(reader.Dict{"Root": root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "unreadable.pdf")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, printed, _ := exec("text", "-layout", path)
+	if !strings.Contains(printed, "[invisible, part unreadable]") {
+		t.Errorf("the run was not marked:\n%s", printed)
+	}
+}
+
+func TestImagesVerb(t *testing.T) {
+	in := pageWithText(t)
+	dir := filepath.Join(t.TempDir(), "pictures")
+	code, out, errOut := exec("images", in, dir)
+	if code != 0 {
+		t.Fatalf("images said %d: %s", code, errOut)
+	}
+	if !strings.Contains(out, "page001-01.samples") || !strings.Contains(out, "page001-02.jpg") {
+		t.Errorf("the pictures are:\n%s", out)
+	}
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 4 {
+		t.Errorf("%d files were written", len(files))
+	}
+	jpg, err := os.ReadFile(filepath.Join(dir, "page001-02.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(jpg) != "pretend" {
+		t.Errorf("the JPEG was changed on the way out: %q", jpg)
+	}
+	// A document with no pictures says so.
+	plain := fixture(t, 1)
+	if _, out, _ = exec("images", plain, filepath.Join(t.TempDir(), "none")); !strings.Contains(out, "no pictures") {
+		t.Errorf("a document with no pictures said:\n%s", out)
+	}
+	for _, args := range [][]string{
+		{"images", in},
+		{"images", "nowhere.pdf", dir},
+		{"images", "-nope", in, dir},
+		{"images", "-pages", "nonsense", in, dir},
+		{"images", in, "/dev/null/cannot"},
+	} {
+		if code, _, _ := exec(args...); code == 0 {
+			t.Errorf("%v was accepted", args)
+		}
+	}
+}
+
+func TestHowARunIsMarked(t *testing.T) {
+	for _, c := range []struct {
+		run  extract.Run
+		want string
+	}{
+		{extract.Run{}, ""},
+		{extract.Run{Invisible: true}, "[invisible] "},
+		{extract.Run{Unreadable: true}, "[part unreadable] "},
+		{extract.Run{Invisible: true, Unreadable: true}, "[invisible, part unreadable] "},
+	} {
+		if got := marks(c.run); got != c.want {
+			t.Errorf("%+v is marked %q, want %q", c.run, got, c.want)
+		}
+	}
+}
+
+func TestAPictureThatCannotBeWritten(t *testing.T) {
+	// Somewhere to put the pictures where one of them cannot go: a directory
+	// already standing where a file should be written.
+	in := pageWithText(t)
+	dir := filepath.Join(t.TempDir(), "pictures")
+	if err := os.MkdirAll(filepath.Join(dir, "page001-01.samples"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _ := exec("images", in, dir); code == 0 {
+		t.Error("writing over a directory was accepted")
+	}
+}
+
+func TestEveryWayAPictureIsNamed(t *testing.T) {
+	for _, c := range []struct {
+		filter reader.Name
+		want   string
+	}{
+		{"DCTDecode", ".jpg"},
+		{"JPXDecode", ".jp2"},
+		{"JBIG2Decode", ".jbig2"},
+		{"", ".samples"},
+	} {
+		if got := imageSuffix(extract.Image{Filter: c.filter}); got != c.want {
+			t.Errorf("%q is written as %q, want %q", c.filter, got, c.want)
 		}
 	}
 }

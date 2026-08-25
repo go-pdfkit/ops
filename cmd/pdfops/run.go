@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-pdfkit/extract"
 	"github.com/go-pdfkit/ops"
 	"github.com/go-pdfkit/reader"
 )
@@ -55,6 +56,8 @@ var commands = []command{
 	{"encrypt", "-user <password> [-owner <password>] [-allow <what>] [-aes128] <in.pdf> <out.pdf>", "protect the file with a password", runEncrypt},
 	{"decrypt", "<in.pdf> <out.pdf>", "write the file without its protection", runDecrypt},
 	{"permissions", "<in.pdf>", "say how the file is protected and what it allows", runPermissions},
+	{"text", "[-pages <range>] [-layout] <in.pdf>", "read the text off the pages", runText},
+	{"images", "[-pages <range>] <in.pdf> <out-directory>", "write out the pictures the pages place", runImages},
 }
 
 // run is the whole program, so that the tests can drive it.
@@ -777,4 +780,122 @@ func openedAs(owner bool) string {
 		return "the owner, so the permissions do not apply"
 	}
 	return "the user"
+}
+
+// runText reads the text off a document and prints it.
+func runText(c *context, args []string) error {
+	fs := flags("text")
+	spec := fs.String("pages", "all", "which pages to read")
+	layout := fs.Bool("layout", false, "print where each piece of text sits as well as what it says")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 1, "<in.pdf>"); err != nil {
+		return err
+	}
+	src, err := c.read(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	pages, err := ops.ParseRange(*spec, src.PageCount())
+	if err != nil {
+		return err
+	}
+	for _, page := range pages {
+		// Every page here came from the range, so it is one the document
+		// has; neither of these can fail.
+		if *layout {
+			runs, _ := extract.Runs(src, page)
+			for _, r := range runs {
+				fmt.Fprintf(c.out, "%d\t%.2f\t%.2f\t%.2f\t%s%s\n",
+					page, r.X, r.Y, r.Size, marks(r), r.Text)
+			}
+			continue
+		}
+		text, _ := extract.Text(src, page)
+		fmt.Fprintln(c.out, text)
+	}
+	return nil
+}
+
+// marks says what is unusual about a run, in front of what it says.
+func marks(r extract.Run) string {
+	switch {
+	case r.Invisible && r.Unreadable:
+		return "[invisible, part unreadable] "
+	case r.Invisible:
+		return "[invisible] "
+	case r.Unreadable:
+		return "[part unreadable] "
+	}
+	return ""
+}
+
+// runImages writes out the pictures a document places.
+func runImages(c *context, args []string) error {
+	fs := flags("images")
+	spec := fs.String("pages", "all", "which pages to take pictures from")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out-directory>"); err != nil {
+		return err
+	}
+	src, err := c.read(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	pages, err := ops.ParseRange(*spec, src.PageCount())
+	if err != nil {
+		return err
+	}
+	dir := fs.Arg(1)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	n := 0
+	for _, page := range pages {
+		// The range only names pages the document has.
+		images, _ := extract.Images(src, page)
+		for i, im := range images {
+			name := fmt.Sprintf("page%03d-%02d%s", page, i+1, imageSuffix(im))
+			path := filepath.Join(dir, name)
+			if err := os.WriteFile(path, im.Data, 0o644); err != nil {
+				return err
+			}
+			fmt.Fprintf(c.out, "%s\t%dx%d\tat %.1f,%.1f\tdrawn %.1fx%.1f\n",
+				name, im.Width, im.Height, im.X, im.Y, im.DrawnWidth, im.DrawnHeight)
+			n++
+		}
+	}
+	if n == 0 {
+		fmt.Fprintln(c.out, "no pictures")
+	}
+	return nil
+}
+
+// imageSuffix names a picture by what it holds. A JPEG is written out as one;
+// anything this has unfiltered into plain samples is written as it stands,
+// since turning samples into pixels means reading a colour space and that is
+// the renderer's work.
+func imageSuffix(im extract.Image) string {
+	switch im.Filter {
+	case "DCTDecode":
+		return ".jpg"
+	case "JPXDecode":
+		return ".jp2"
+	case "JBIG2Decode":
+		return ".jbig2"
+	}
+	return ".samples"
+}
+
+// read opens a document rather than a document being assembled, which is what
+// reading a page back needs.
+func (c *context) read(path string) (*reader.Document, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return reader.OpenWithPassword(b, c.password)
 }
