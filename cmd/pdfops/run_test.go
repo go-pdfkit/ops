@@ -437,3 +437,65 @@ func TestVerbsThatNeedAPage(t *testing.T) {
 		}
 	}
 }
+
+func TestStampingVerbs(t *testing.T) {
+	in := fixture(t, 3)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+
+	if code, _, msg := exec("watermark", "-text", "DRAFT", in, out); code != 0 {
+		t.Fatalf("watermark: code %d: %s", code, msg)
+	}
+	if code, _, msg := exec("number", "-format", "{page} of {pages}", in, out); code != 0 {
+		t.Fatalf("number: code %d: %s", code, msg)
+	}
+	if code, _, msg := exec("bates", "-prefix", "EX", "-start", "5", "-digits", "4", in, out); code != 0 {
+		t.Fatalf("bates: code %d: %s", code, msg)
+	}
+	if code, _, msg := exec("stamp", "-text", "seen", "-at", "top-right", "-bold",
+		"-size", "8", "-rotate", "30", "-opacity", "0.5", in, out); code != 0 {
+		t.Fatalf("stamp: code %d: %s", code, msg)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := reader.Open(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := d.PageContent(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "(seen) Tj") {
+		t.Errorf("content = %q", content)
+	}
+
+	for _, args := range [][]string{
+		{"watermark", in},
+		{"watermark", "-nosuchflag", in, out},
+		{"watermark", "-text", "", in, out},
+		{"watermark", "-text", "x", "/no/such/file.pdf", out},
+		{"watermark", "-text", "x", in, "/no/such/dir/x.pdf"},
+		{"number", in},
+		{"number", "-nosuchflag", in, out},
+		{"number", "-pages", "9", in, out},
+		{"number", "/no/such/file.pdf", out},
+		{"number", in, "/no/such/dir/x.pdf"},
+		{"bates", in},
+		{"bates", "-nosuchflag", in, out},
+		{"bates", "-pages", "9", in, out},
+		{"bates", "/no/such/file.pdf", out},
+		{"bates", in, "/no/such/dir/x.pdf"},
+		{"stamp", in},
+		{"stamp", "-nosuchflag", in, out},
+		{"stamp", "-text", "x", "-at", "nowhere", in, out},
+		{"stamp", "-text", "", in, out},
+		{"stamp", "-text", "x", "/no/such/file.pdf", out},
+		{"stamp", "-text", "x", in, "/no/such/dir/x.pdf"},
+	} {
+		if code, _, _ := exec(args...); code != 1 {
+			t.Errorf("%v should fail", args)
+		}
+	}
+}

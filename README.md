@@ -40,6 +40,10 @@ pdfops nup -n 4 slides.pdf handout.pdf
 pdfops booklet chapter.pdf to-fold.pdf
 pdfops overlay -with letterhead.pdf plain.pdf headed.pdf
 pdfops blank -before 3 report.pdf report-with-a-gap.pdf
+pdfops watermark -text CONFIDENTIAL contract.pdf marked.pdf
+pdfops number -format "{page} of {pages}" report.pdf numbered.pdf
+pdfops bates -prefix ACME- -start 1 exhibits.pdf stamped.pdf
+pdfops stamp -text "seen 25 August" -at top-right -bold notes.pdf seen.pdf
 pdfops strip private.pdf clean.pdf
 pdfops info file.pdf
 ```
@@ -49,6 +53,11 @@ A page range is written `1-3,7,10-` and may say `all`, `even`, `odd` or
 reverses three pages and `select -pages 1,1` gives you two copies.
 
 `-password` opens an encrypted file; what is written out is not encrypted.
+
+Text is drawn in the four faces every viewer already has — Helvetica,
+Helvetica-Bold, Courier and Courier-Bold — so nothing is embedded and a
+watermark costs about a kilobyte. Stamp text may say `{page}`, `{pages}`
+and `{n}`, the last being a counter for serial numbering.
 
 ## Verified against real files
 
