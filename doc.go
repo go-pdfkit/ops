@@ -27,6 +27,10 @@ type Doc struct {
 	flatten      bool
 	dropAnnots   bool
 	dropOutlines bool
+	// outline, when set, is written instead of carrying the sources' own
+	// bookmarks over: a document assembled rather than merged has an outline
+	// of its caller's rather than of anybody else's.
+	outline []Bookmark
 
 	// How the file is written: packed into compressed object streams, and
 	// protected or not.

@@ -21,17 +21,43 @@ type outlineItem struct {
 // that loses every bookmark is a poor merge.
 func (d *Doc) DropOutlines() { d.dropOutlines = true }
 
-// writeOutlines carries the bookmarks of every source document over, in the
-// order the documents first contribute a page, dropping whatever pointed at a
-// page that is no longer here.
-func (d *Doc) writeOutlines(w *reader.Writer, where destinations) reader.Object {
+// A Bookmark is an entry of an outline written from scratch: what it says, the
+// page of this document it points at counting from one, and whatever sits
+// under it.
+//
+// It is what a document assembled rather than merged carries — a shared
+// edit, a report built out of pieces — where there is no source outline to
+// carry over because the outline is the caller's own.
+type Bookmark struct {
+	Title    string
+	Page     int
+	Children []Bookmark
+}
+
+// SetOutline writes these bookmarks rather than carrying over the ones the
+// sources had. An entry pointing at a page this document has not got is left
+// out, and so is everything under it: a heading whose section has gone is not
+// a heading any more.
+//
+// Passing nothing puts the sources' own bookmarks back.
+func (d *Doc) SetOutline(marks []Bookmark) { d.outline = marks }
+
+// writeOutlines writes the bookmarks the caller set, or carries over those of
+// every source document, in the order the documents first contribute a page,
+// dropping whatever pointed at a page that is no longer here.
+func (d *Doc) writeOutlines(w *reader.Writer, where destinations, refs []reader.Ref) reader.Object {
 	if d.dropOutlines {
 		return nil
 	}
 	var items []outlineItem
-	budget := maxOutlineItems
-	for _, src := range d.sources() {
-		items = append(items, d.readOutlines(w, src, where, &budget)...)
+	if len(d.outline) > 0 {
+		budget := maxOutlineItems
+		items = d.buildOutline(refs, d.outline, 0, &budget)
+	} else {
+		budget := maxOutlineItems
+		for _, src := range d.sources() {
+			items = append(items, d.readOutlines(w, src, where, &budget)...)
+		}
 	}
 	if len(items) == 0 {
 		return nil
@@ -58,6 +84,30 @@ func (d *Doc) sources() []*reader.Document {
 		}
 		seen[p.src] = true
 		out = append(out, p.src)
+	}
+	return out
+}
+
+// buildOutline turns the caller's bookmarks into the ones a file carries,
+// dropping any that point nowhere in this document.
+func (d *Doc) buildOutline(refs []reader.Ref, marks []Bookmark, depth int, budget *int) []outlineItem {
+	if depth > maxOutlineDepth {
+		return nil
+	}
+	var out []outlineItem
+	for _, m := range marks {
+		if *budget <= 0 {
+			return out
+		}
+		if m.Page < 1 || m.Page > len(refs) {
+			continue
+		}
+		*budget--
+		out = append(out, outlineItem{
+			title:    []byte(m.Title),
+			dest:     reader.Array{refs[m.Page-1], reader.Name("Fit")},
+			children: d.buildOutline(refs, m.Children, depth+1, budget),
+		})
 	}
 	return out
 }

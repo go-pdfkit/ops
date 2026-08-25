@@ -65,7 +65,7 @@ func (d *Doc) Bytes() ([]byte, error) {
 	})
 
 	catalog := reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef}
-	if outlines := d.writeOutlines(w, where); outlines != nil {
+	if outlines := d.writeOutlines(w, where, refs); outlines != nil {
 		catalog["Outlines"] = outlines
 	}
 	trailer := reader.Dict{"Root": w.Add(catalog)}
