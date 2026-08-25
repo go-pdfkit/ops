@@ -36,6 +36,10 @@ pdfops rotate -pages all -by 90 sideways.pdf upright.pdf
 pdfops crop -box 20,20,575,820 wide.pdf trimmed.pdf
 pdfops split -every 10 book.pdf chapters/
 pdfops reverse back-to-front.pdf right-way-round.pdf
+pdfops nup -n 4 slides.pdf handout.pdf
+pdfops booklet chapter.pdf to-fold.pdf
+pdfops overlay -with letterhead.pdf plain.pdf headed.pdf
+pdfops blank -before 3 report.pdf report-with-a-gap.pdf
 pdfops strip private.pdf clean.pdf
 pdfops info file.pdf
 ```
@@ -60,6 +64,11 @@ stream rather than on an exit status:
 - selecting the last page yields exactly that page.
 
 **All four hold on all 118 833 files.**
+
+Laying pages out is checked the same way: for each of the **1 959**
+multi-page files in that corpus, two-up produces the right number of sheets
+and every form drawn on them carries exactly the bytes of the page it stands
+for, blanks included. **All 1 959 hold.**
 
 ## Testing
 
