@@ -39,6 +39,10 @@ var commands = []command{
 	{"rotate", "-pages <range> -by <degrees> <in.pdf> <out.pdf>", "turn pages by a multiple of ninety", runRotate},
 	{"crop", "-pages <range> -box <l,b,r,t> <in.pdf> <out.pdf>", "set the visible area, in points", runCrop},
 	{"split", "-every <n> <in.pdf> <out-directory>", "cut into files of at most n pages", runSplit},
+	{"nup", "-n <count> <in.pdf> <out.pdf>", "lay several pages on each sheet", runNUp},
+	{"booklet", "<in.pdf> <out.pdf>", "order and lay out for saddle-stitch printing", runBooklet},
+	{"overlay", "-with <mark.pdf> <in.pdf> <out.pdf>", "draw another file over these pages", runOverlay},
+	{"blank", "-before <page> <in.pdf> <out.pdf>", "insert an empty page", runBlank},
 	{"info", "<in.pdf>", "print what the file says about itself", runInfo},
 	{"strip", "<in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
 }
@@ -368,5 +372,90 @@ func runStrip(c *context, args []string) error {
 		return err
 	}
 	d.ClearInfo()
+	return save(d, fs.Arg(1))
+}
+
+func runNUp(c *context, args []string) error {
+	fs := flags("nup")
+	n := fs.Int("n", 2, "how many pages to a sheet")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.NUp(*n); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+func runBooklet(c *context, args []string) error {
+	fs := flags("booklet")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.Booklet(); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+func runOverlay(c *context, args []string) error {
+	fs := flags("overlay")
+	with := fs.String("with", "", "the file to draw")
+	under := fs.Bool("under", false, "draw it underneath rather than on top")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	mark, err := c.open(*with)
+	if err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if *under {
+		err = d.Underlay(mark)
+	} else {
+		err = d.Overlay(mark)
+	}
+	if err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+func runBlank(c *context, args []string) error {
+	fs := flags("blank")
+	before := fs.Int("before", 1, "the page to insert before; one past the end appends")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.InsertBlank(*before); err != nil {
+		return err
+	}
 	return save(d, fs.Arg(1))
 }
