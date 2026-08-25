@@ -44,7 +44,9 @@ pdfops watermark -text CONFIDENTIAL contract.pdf marked.pdf
 pdfops number -format "{page} of {pages}" report.pdf numbered.pdf
 pdfops bates -prefix ACME- -start 1 exhibits.pdf stamped.pdf
 pdfops stamp -text "seen 25 August" -at top-right -bold notes.pdf seen.pdf
-pdfops strip private.pdf clean.pdf
+pdfops sanitize downloaded.pdf safe.pdf
+pdfops flatten filled-form.pdf final.pdf
+pdfops strip -annotations -bookmarks private.pdf clean.pdf
 pdfops info file.pdf
 ```
 
@@ -53,6 +55,21 @@ A page range is written `1-3,7,10-` and may say `all`, `even`, `odd` or
 reverses three pages and `select -pages 1,1` gives you two copies.
 
 `-password` opens an encrypted file; what is written out is not encrypted.
+
+Links and bookmarks are carried over and pointed at the pages they became
+here, so extracting three pages of a book leaves the links between those
+three working and drops the ones that led out of them. A link or a bookmark
+that already led nowhere in the source keeps its place without a
+destination, because a file with broken bookmarks should keep its shape
+rather than lose it.
+
+The catalogue is always written from nothing, so a document-level script,
+an action that runs on opening, or a tree of embedded files never survives
+any operation at all. `sanitize` deals with what travels attached to a
+page: its own actions, an annotation's actions, JavaScript, launching,
+form submission, the annotation types that exist to play or embed
+something, and files associated with a page. A link to the web is not
+executable and stays.
 
 Text is drawn in the four faces every viewer already has — Helvetica,
 Helvetica-Bold, Courier and Courier-Bold — so nothing is embedded and a
