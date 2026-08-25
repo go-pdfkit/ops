@@ -332,3 +332,108 @@ func TestParseBox(t *testing.T) {
 		t.Errorf("got %v, %v", got, err)
 	}
 }
+
+func TestNUpBookletOverlayBlank(t *testing.T) {
+	in := fixture(t, 4)
+	dir := t.TempDir()
+	out := filepath.Join(dir, "out.pdf")
+
+	if code, _, msg := exec("nup", "-n", "2", in, out); code != 0 {
+		t.Fatalf("nup: code %d: %s", code, msg)
+	}
+	if got := contentsOf(t, out); len(got) != 2 {
+		t.Errorf("nup gave %d sheets", len(got))
+	}
+	if code, _, msg := exec("booklet", in, out); code != 0 {
+		t.Fatalf("booklet: code %d: %s", code, msg)
+	}
+	if got := contentsOf(t, out); len(got) != 2 {
+		t.Errorf("booklet gave %d sheets", len(got))
+	}
+	if code, _, msg := exec("overlay", "-with", in, in, out); code != 0 {
+		t.Fatalf("overlay: code %d: %s", code, msg)
+	}
+	if code, _, msg := exec("overlay", "-under", "-with", in, in, out); code != 0 {
+		t.Fatalf("underlay: code %d: %s", code, msg)
+	}
+	if code, _, msg := exec("blank", "-before", "2", in, out); code != 0 {
+		t.Fatalf("blank: code %d: %s", code, msg)
+	}
+	if got := contentsOf(t, out); len(got) != 5 || got[1] != "" {
+		t.Errorf("blank gave %q", got)
+	}
+
+	for _, args := range [][]string{
+		{"nup", in},
+		{"nup", "-nosuchflag", in, out},
+		{"nup", "-n", "0", in, out},
+		{"nup", "-n", "2", "/no/such/file.pdf", out},
+		{"nup", "-n", "2", in, "/no/such/dir/x.pdf"},
+		{"booklet", in},
+		{"booklet", "-nosuchflag", in, out},
+		{"booklet", "/no/such/file.pdf", out},
+		{"booklet", in, "/no/such/dir/x.pdf"},
+		{"overlay", in},
+		{"overlay", "-nosuchflag", in, out},
+		{"overlay", "-with", "/no/such/file.pdf", in, out},
+		{"overlay", "-with", in, "/no/such/file.pdf", out},
+		{"overlay", "-with", in, in, "/no/such/dir/x.pdf"},
+		{"blank", in},
+		{"blank", "-nosuchflag", in, out},
+		{"blank", "-before", "0", in, out},
+		{"blank", "-before", "1", "/no/such/file.pdf", out},
+		{"blank", "-before", "1", in, "/no/such/dir/x.pdf"},
+	} {
+		if code, _, _ := exec(args...); code != 1 {
+			t.Errorf("%v should fail", args)
+		}
+	}
+}
+
+func TestOverlayOfAnEmptyDocumentFails(t *testing.T) {
+	in := fixture(t, 1)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	// A one-page file whose only page has been dropped cannot be drawn.
+	if code, _, _ := exec("overlay", "-with", out, in, out); code != 1 {
+		t.Error("an unreadable overlay should fail")
+	}
+	if code, _, _ := exec("overlay", "-under", "-with", "/no/such.pdf", in, out); code != 1 {
+		t.Error("an unreadable underlay should fail")
+	}
+}
+
+// pagelessFixture writes a file whose page tree is empty — legal, and the one
+// thing several verbs have nothing to work with.
+func pagelessFixture(t *testing.T) string {
+	t.Helper()
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{}, "Count": reader.Integer(0)})
+	root := w.Add(reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef})
+	out, err := w.Finish(reader.Dict{"Root": root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "empty.pdf")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestVerbsThatNeedAPage(t *testing.T) {
+	empty := pagelessFixture(t)
+	in := fixture(t, 2)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	for _, args := range [][]string{
+		{"booklet", empty, out},
+		{"nup", "-n", "2", empty, out},
+		{"overlay", "-with", empty, in, out},
+		{"overlay", "-under", "-with", empty, in, out},
+	} {
+		if code, _, _ := exec(args...); code != 1 {
+			t.Errorf("%v should fail", args)
+		}
+	}
+}
