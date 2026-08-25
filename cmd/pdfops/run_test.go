@@ -499,3 +499,33 @@ func TestStampingVerbs(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeFlattenAndStripFlags(t *testing.T) {
+	in := fixture(t, 2)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	for _, args := range [][]string{
+		{"sanitize", in, out},
+		{"flatten", in, out},
+		{"strip", "-annotations", "-bookmarks", in, out},
+		{"strip", "-metadata=false", in, out},
+	} {
+		if code, _, msg := exec(args...); code != 0 {
+			t.Fatalf("%v: code %d: %s", args, code, msg)
+		}
+	}
+	for _, args := range [][]string{
+		{"sanitize", in},
+		{"sanitize", "-nosuchflag", in, out},
+		{"sanitize", "/no/such/file.pdf", out},
+		{"sanitize", in, "/no/such/dir/x.pdf"},
+		{"flatten", in},
+		{"flatten", "-nosuchflag", in, out},
+		{"flatten", "/no/such/file.pdf", out},
+		{"flatten", in, "/no/such/dir/x.pdf"},
+		{"strip", "-nosuchflag", in, out},
+	} {
+		if code, _, _ := exec(args...); code != 1 {
+			t.Errorf("%v should fail", args)
+		}
+	}
+}

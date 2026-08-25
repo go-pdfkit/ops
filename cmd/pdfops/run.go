@@ -48,7 +48,9 @@ var commands = []command{
 	{"bates", "-prefix <text> -start <n> <in.pdf> <out.pdf>", "stamp a running serial, exhibit style", runBates},
 	{"stamp", "-text <words> -at <place> <in.pdf> <out.pdf>", "draw a line of text where you say", runStamp},
 	{"info", "<in.pdf>", "print what the file says about itself", runInfo},
-	{"strip", "<in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
+	{"strip", "[-annotations] [-bookmarks] <in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
+	{"sanitize", "<in.pdf> <out.pdf>", "remove what runs rather than shows: scripts, launching, embedded files", runSanitize},
+	{"flatten", "<in.pdf> <out.pdf>", "draw the annotations into the page and drop them", runFlatten},
 }
 
 // run is the whole program, so that the tests can drive it.
@@ -365,6 +367,9 @@ func runInfo(c *context, args []string) error {
 
 func runStrip(c *context, args []string) error {
 	fs := flags("strip")
+	metadata := fs.Bool("metadata", true, "drop the information dictionary")
+	annotations := fs.Bool("annotations", false, "drop every annotation, links included")
+	bookmarks := fs.Bool("bookmarks", false, "drop the bookmarks")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -375,7 +380,47 @@ func runStrip(c *context, args []string) error {
 	if err != nil {
 		return err
 	}
-	d.ClearInfo()
+	if *metadata {
+		d.ClearInfo()
+	}
+	if *annotations {
+		d.RemoveAnnotations()
+	}
+	if *bookmarks {
+		d.DropOutlines()
+	}
+	return save(d, fs.Arg(1))
+}
+
+func runSanitize(c *context, args []string) error {
+	fs := flags("sanitize")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	d.Sanitize()
+	return save(d, fs.Arg(1))
+}
+
+func runFlatten(c *context, args []string) error {
+	fs := flags("flatten")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	d.Flatten()
 	return save(d, fs.Arg(1))
 }
 
