@@ -21,6 +21,12 @@ type Doc struct {
 	pages   []Page
 	info    reader.Dict
 	version string
+
+	// What to leave behind when the file is written.
+	sanitize     bool
+	flatten      bool
+	dropAnnots   bool
+	dropOutlines bool
 }
 
 // A Page is one page of a document, borrowed from the file it came from. The
@@ -66,7 +72,7 @@ func FromDocument(src *reader.Document) *Doc {
 	if info, ok := src.GetDict(src.Trailer(), "Info"); ok {
 		d.info = reader.Dict{}
 		for k, v := range info {
-			resolved, _ := src.Resolve(v)
+			resolved := resolve(src, v)
 			d.info[k] = resolved
 		}
 	}
@@ -80,7 +86,7 @@ func New() *Doc { return &Doc{version: "1.7"} }
 func rotationOf(src *reader.Document, page reader.Dict) int {
 	// A page the tree produced always reads; an entry that is not a number
 	// simply is not a rotation.
-	o, _ := src.Resolve(page.Get("Rotate"))
+	o := resolve(src, page.Get("Rotate"))
 	n, ok := reader.ToInt(o)
 	if !ok {
 		return 0
