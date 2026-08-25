@@ -529,3 +529,110 @@ func TestSanitizeFlattenAndStripFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestCompressVerb(t *testing.T) {
+	in := fixture(t, 30)
+	out := filepath.Join(t.TempDir(), "packed.pdf")
+	if code, _, errOut := exec("compress", in, out); code != 0 {
+		t.Fatalf("compress said %d: %s", code, errOut)
+	}
+	before, _ := os.Stat(in)
+	after, _ := os.Stat(out)
+	if after.Size() >= before.Size() {
+		t.Errorf("packed is %d bytes and plain is %d", after.Size(), before.Size())
+	}
+	if got := contentsOf(t, out); len(got) != 30 || got[0] != "page 1" {
+		t.Errorf("the packed file reads back as %v", got)
+	}
+	if code, _, _ := exec("compress", in); code == 0 {
+		t.Error("compress with one path was accepted")
+	}
+	if code, _, _ := exec("compress", "nowhere.pdf", out); code == 0 {
+		t.Error("compress read a file that is not there")
+	}
+	if code, _, _ := exec("compress", "-nope", in, out); code == 0 {
+		t.Error("compress took a flag it has never heard of")
+	}
+}
+
+func TestEncryptDecryptAndPermissionsVerbs(t *testing.T) {
+	in := fixture(t, 3)
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked.pdf")
+	if code, _, errOut := exec("encrypt", "-user", "u", "-owner", "o", "-allow", "print,copy", in, locked); code != 0 {
+		t.Fatalf("encrypt said %d: %s", code, errOut)
+	}
+	b, err := os.ReadFile(locked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.Open(b); err == nil {
+		t.Error("the encrypted file opened with no password")
+	}
+
+	code, out, errOut := exec("-password", "u", "permissions", locked)
+	if code != 0 {
+		t.Fatalf("permissions said %d: %s", code, errOut)
+	}
+	for _, want := range []string{"AES-256", "the user", "print, copy"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("permissions did not mention %q:\n%s", want, out)
+		}
+	}
+	if _, out, _ = exec("-password", "o", "permissions", locked); !strings.Contains(out, "the owner") {
+		t.Errorf("the owner password was not recognised:\n%s", out)
+	}
+	if _, out, _ = exec("permissions", in); !strings.Contains(out, "protection none") {
+		t.Errorf("an unprotected file reported:\n%s", out)
+	}
+
+	plain := filepath.Join(dir, "plain.pdf")
+	if code, _, errOut := exec("-password", "u", "decrypt", locked, plain); code != 0 {
+		t.Fatalf("decrypt said %d: %s", code, errOut)
+	}
+	if got := contentsOf(t, plain); len(got) != 3 || got[2] != "page 3" {
+		t.Errorf("the decrypted file reads back as %v", got)
+	}
+
+	// The older method, for readers from before 2008.
+	old := filepath.Join(dir, "old.pdf")
+	if code, _, errOut := exec("encrypt", "-user", "u", "-aes128", in, old); code != 0 {
+		t.Fatalf("encrypt -aes128 said %d: %s", code, errOut)
+	}
+	if _, out, _ = exec("-password", "u", "permissions", old); !strings.Contains(out, "AES-128") {
+		t.Errorf("-aes128 produced:\n%s", out)
+	}
+}
+
+func TestTheVerbsThatProtectRefuseWhatTheyShould(t *testing.T) {
+	in := fixture(t, 2)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"encrypt with no password at all", []string{"encrypt", in, out}},
+		{"encrypt with a permission nobody has heard of", []string{"encrypt", "-user", "u", "-allow", "fly", in, out}},
+		{"encrypt with one path", []string{"encrypt", "-user", "u", in}},
+		{"encrypt a file that is not there", []string{"encrypt", "-user", "u", "nowhere.pdf", out}},
+		{"encrypt with an unknown flag", []string{"encrypt", "-nope", in, out}},
+		{"decrypt with one path", []string{"decrypt", in}},
+		{"decrypt a file that is not there", []string{"decrypt", "nowhere.pdf", out}},
+		{"decrypt with an unknown flag", []string{"decrypt", "-nope", in, out}},
+		{"permissions with no path", []string{"permissions"}},
+		{"permissions on a file that is not there", []string{"permissions", "nowhere.pdf"}},
+		{"permissions with an unknown flag", []string{"permissions", "-nope", in}},
+	}
+	for _, c := range cases {
+		if code, _, _ := exec(c.args...); code == 0 {
+			t.Errorf("%s was accepted", c.name)
+		}
+	}
+	// Asking for everything is what saying nothing means, and "none" is a
+	// way of saying it out loud.
+	for _, allow := range []string{"", "all", "none", "print, copy"} {
+		if code, _, errOut := exec("encrypt", "-user", "u", "-allow", allow, in, out); code != 0 {
+			t.Errorf("-allow %q said %d: %s", allow, code, errOut)
+		}
+	}
+}
