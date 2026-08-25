@@ -163,3 +163,86 @@ func TestBookmarksOfMadePagesAreNone(t *testing.T) {
 		t.Errorf("bookmarks = %v", got)
 	}
 }
+
+func TestAnOutlineWrittenFromScratch(t *testing.T) {
+	// A document assembled rather than merged has an outline of its caller's:
+	// there is no source outline to carry over.
+	d, err := Open(simple(t, 5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.SetOutline([]Bookmark{
+		{Title: "One", Page: 1, Children: []Bookmark{
+			{Title: "One and a half", Page: 2},
+		}},
+		{Title: "Three", Page: 3},
+		{Title: "Nowhere", Page: 99},     // past the end
+		{Title: "Also nowhere", Page: 0}, // not a page
+		{Title: "Gone", Page: 42, Children: []Bookmark{{Title: "Under", Page: 1}}},
+	})
+	back, _ := writeAndOpen(t, d)
+	titles := outlineTitles(t, back)
+	want := []string{"One", "One and a half", "Three"}
+	if !reflect.DeepEqual(titles, want) {
+		t.Errorf("the outline says %v, want %v", titles, want)
+	}
+}
+
+func TestAnOutlineSetAndThenTakenBack(t *testing.T) {
+	// Passing nothing puts the sources' own bookmarks back, and asking for
+	// none at all still wins.
+	f := richPDF(t, 3)
+	d, err := Open(f.bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.SetOutline([]Bookmark{{Title: "Mine", Page: 1}})
+	back, _ := writeAndOpen(t, d)
+	if titles := outlineTitles(t, back); len(titles) != 1 || titles[0] != "Mine" {
+		t.Errorf("the outline says %v", titles)
+	}
+
+	d, _ = Open(f.bytes)
+	d.SetOutline(nil)
+	back, _ = writeAndOpen(t, d)
+	if titles := outlineTitles(t, back); len(titles) == 0 {
+		t.Error("the source's own bookmarks were not put back")
+	}
+
+	d, _ = Open(f.bytes)
+	d.SetOutline([]Bookmark{{Title: "Mine", Page: 1}})
+	d.DropOutlines()
+	back, _ = writeAndOpen(t, d)
+	if titles := outlineTitles(t, back); len(titles) != 0 {
+		t.Errorf("bookmarks were written after being dropped: %v", titles)
+	}
+}
+
+func TestAnOutlineDeeperThanAnyoneNeeds(t *testing.T) {
+	// A tree deeper than the format is read to, and one wider than it is
+	// carried to, are both cut off rather than followed.
+	deep := Bookmark{Title: "top", Page: 1}
+	at := &deep
+	for i := 0; i < maxOutlineDepth+5; i++ {
+		at.Children = []Bookmark{{Title: "under", Page: 1}}
+		at = &at.Children[0]
+	}
+	d, err := Open(simple(t, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.SetOutline([]Bookmark{deep})
+	if _, err := d.Bytes(); err != nil {
+		t.Fatal(err)
+	}
+
+	wide := make([]Bookmark, maxOutlineItems+10)
+	for i := range wide {
+		wide[i] = Bookmark{Title: "one", Page: 1}
+	}
+	d, _ = Open(simple(t, 2))
+	d.SetOutline(wide)
+	if _, err := d.Bytes(); err != nil {
+		t.Fatal(err)
+	}
+}
