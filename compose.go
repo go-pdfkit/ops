@@ -267,6 +267,16 @@ func writeMatrix(w *bytes.Buffer, m [6]float64) {
 // whatever places it need only scale and translate. A page's rotation is
 // baked into the form's matrix here, exactly as a viewer would apply it.
 func (d *Doc) asForm(w *reader.Writer, p Page) reader.Ref {
+	if len(p.marks) > 0 && !p.blank && p.tiles == nil {
+		inner := p
+		inner.marks = nil
+		size := d.effectiveSize(p)
+		return d.asForm(w, Page{
+			size:  size,
+			marks: p.marks,
+			tiles: []tile{{from: inner, matrix: [6]float64{1, 0, 0, 1, 0, 0}}},
+		})
+	}
 	var content []byte
 	extra := reader.Dict{
 		"Type":    reader.Name("XObject"),
@@ -275,9 +285,9 @@ func (d *Doc) asForm(w *reader.Writer, p Page) reader.Ref {
 	box := [4]float64{0, 0, p.size[0], p.size[1]}
 	switch {
 	case p.blank:
-	case p.tiles != nil:
+	case p.tiles != nil || len(p.marks) > 0:
 		var res reader.Dict
-		content, res = d.composeContent(w, p)
+		content, res = d.madeContent(w, p, [4]float64{0, 0, p.size[0], p.size[1]})
 		extra["Resources"] = res
 	default:
 		content, _ = p.src.PageContent(p.number)
@@ -336,4 +346,20 @@ func contentStream(data []byte, extra reader.Dict) *reader.Stream {
 	zw.Close()
 	d["Filter"] = reader.Name("FlateDecode")
 	return &reader.Stream{Dict: d, Raw: buf.Bytes()}
+}
+
+// madeContent builds the content stream and resources of a page this package
+// made: the tiles it draws, then the text stamped on top of them.
+func (d *Doc) madeContent(w *reader.Writer, p Page, area [4]float64) ([]byte, reader.Dict) {
+	var content []byte
+	resources := reader.Dict{}
+	if p.tiles != nil {
+		content, resources = d.composeContent(w, p)
+	}
+	if len(p.marks) > 0 {
+		stamp, fonts, alpha := d.stampContent(p, area)
+		content = append(content, stamp...)
+		resources = mergeResources(resources, stampResources(fonts, alpha))
+	}
+	return content, resources
 }
