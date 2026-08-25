@@ -1,4 +1,2 @@
-github.com/go-pdfkit/reader v0.1.0 h1:DbkTAXYWdhd6C5yl7+Ki68QWlg+h7vfLQw79q94qerw=
-github.com/go-pdfkit/reader v0.1.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
-github.com/go-pdfkit/reader v0.2.0 h1:jY8BZkfnHw/ImyRANapU/lQrTM1d1hR960Xb9nGC+nY=
-github.com/go-pdfkit/reader v0.2.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
+github.com/go-pdfkit/reader v0.4.0 h1:qPbNZSO+Xl+4NBvQoV1PYt7HlqHaEAQ1tUc6/IL8JAU=
+github.com/go-pdfkit/reader v0.4.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
