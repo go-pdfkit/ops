@@ -27,6 +27,11 @@ type Doc struct {
 	flatten      bool
 	dropAnnots   bool
 	dropOutlines bool
+
+	// How the file is written: packed into compressed object streams, and
+	// protected or not.
+	packed  bool
+	protect *reader.Encryption
 }
 
 // A Page is one page of a document, borrowed from the file it came from. The

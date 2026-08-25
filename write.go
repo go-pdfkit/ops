@@ -26,6 +26,14 @@ func (d *Doc) Bytes() ([]byte, error) {
 		return nil, fmt.Errorf("ops: a document with no pages cannot be written")
 	}
 	w := reader.NewWriter(d.version)
+	if d.packed {
+		w = reader.NewPackedWriter(d.version)
+	}
+	if d.protect != nil {
+		// Before anything is written: a file cannot be protected after the
+		// fact, because the key is what everything in it is written through.
+		w.Encrypt(*d.protect)
+	}
 	pagesRef := w.Reserve()
 
 	// Pages are numbered first and written last: what goes on one of them may
