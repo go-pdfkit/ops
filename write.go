@@ -36,8 +36,38 @@ func (d *Doc) Bytes() ([]byte, error) {
 	return w.Finish(trailer)
 }
 
-// writePage copies one page into the file being written.
+// writePage writes one page: copied out of its source file, built out of
+// other pages, or empty.
 func (d *Doc) writePage(w *reader.Writer, p Page, parent reader.Ref) reader.Ref {
+	if p.blank || p.tiles != nil {
+		return d.writeMadePage(w, p, parent)
+	}
+	return d.writeBorrowedPage(w, p, parent)
+}
+
+// writeMadePage writes a page this package built rather than borrowed.
+func (d *Doc) writeMadePage(w *reader.Writer, p Page, parent reader.Ref) reader.Ref {
+	page := reader.Dict{
+		"Type":     reader.Name("Page"),
+		"Parent":   parent,
+		"MediaBox": boxArray([4]float64{0, 0, p.size[0], p.size[1]}),
+	}
+	if p.rotate != 0 {
+		page["Rotate"] = reader.Integer(p.rotate)
+	}
+	if p.tiles != nil {
+		content, resources := d.composeContent(w, p)
+		page["Contents"] = w.Add(contentStream(content, nil))
+		page["Resources"] = resources
+	}
+	if p.crop != nil {
+		page["CropBox"] = box(p.crop)
+	}
+	return w.Add(page)
+}
+
+// writeBorrowedPage copies a page out of the file it came from.
+func (d *Doc) writeBorrowedPage(w *reader.Writer, p Page, parent reader.Ref) reader.Ref {
 	src, _ := p.src.Page(p.number)
 	// /Parent is dropped: it would drag the page's original tree — and through
 	// it every other page of that file — into this one. /Rotate is dropped

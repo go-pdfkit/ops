@@ -31,6 +31,12 @@ type Page struct {
 	rotate int // a multiple of 90, normalised to 0, 90, 180 or 270
 	media  []float64
 	crop   []float64
+
+	// A page is composed rather than borrowed when it has tiles, and blank
+	// when it has neither. size is the sheet, in points, for both.
+	tiles []tile
+	blank bool
+	size  [2]float64
 }
 
 // Open reads a PDF file held in memory, with the empty password.
