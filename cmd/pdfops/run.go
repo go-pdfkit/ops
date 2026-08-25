@@ -51,6 +51,10 @@ var commands = []command{
 	{"strip", "[-annotations] [-bookmarks] <in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
 	{"sanitize", "<in.pdf> <out.pdf>", "remove what runs rather than shows: scripts, launching, embedded files", runSanitize},
 	{"flatten", "<in.pdf> <out.pdf>", "draw the annotations into the page and drop them", runFlatten},
+	{"compress", "<in.pdf> <out.pdf>", "pack the objects into compressed streams", runCompress},
+	{"encrypt", "-user <password> [-owner <password>] [-allow <what>] [-aes128] <in.pdf> <out.pdf>", "protect the file with a password", runEncrypt},
+	{"decrypt", "<in.pdf> <out.pdf>", "write the file without its protection", runDecrypt},
+	{"permissions", "<in.pdf>", "say how the file is protected and what it allows", runPermissions},
 }
 
 // run is the whole program, so that the tests can drive it.
@@ -624,4 +628,153 @@ func runStamp(c *context, args []string) error {
 		return err
 	}
 	return save(d, fs.Arg(1))
+}
+
+// runCompress packs the file's objects into compressed streams.
+func runCompress(c *context, args []string) error {
+	fs := flags("compress")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	d.Compress()
+	return save(d, fs.Arg(1))
+}
+
+// permissionFlags names each permission the way a person would ask for it.
+var permissionFlags = []struct {
+	name string
+	bit  reader.Permissions
+}{
+	{"print", reader.PermPrint},
+	{"print-faithful", reader.PermPrintFaithful},
+	{"modify", reader.PermModify},
+	{"assemble", reader.PermAssemble},
+	{"copy", reader.PermCopy},
+	{"extract", reader.PermExtract},
+	{"annotate", reader.PermAnnotate},
+	{"fill-forms", reader.PermFillForms},
+	{"all", reader.AllPermissions},
+	{"none", 0},
+}
+
+// parsePermissions reads a comma-separated list of what a reader may do.
+func parsePermissions(spec string) (reader.Permissions, error) {
+	if spec == "" {
+		return reader.AllPermissions, nil
+	}
+	var out reader.Permissions
+	for _, word := range strings.Split(spec, ",") {
+		word = strings.TrimSpace(word)
+		found := false
+		for _, p := range permissionFlags {
+			if p.name == word {
+				out |= p.bit
+				found = true
+				break
+			}
+		}
+		if !found {
+			return 0, fmt.Errorf("no such permission %q; there is %s", word, permissionList())
+		}
+	}
+	return out, nil
+}
+
+// permissionList is every permission name, for an error message.
+func permissionList() string {
+	names := make([]string, 0, len(permissionFlags))
+	for _, p := range permissionFlags {
+		names = append(names, p.name)
+	}
+	return strings.Join(names, ", ")
+}
+
+// runEncrypt protects a file with a password.
+func runEncrypt(c *context, args []string) error {
+	fs := flags("encrypt")
+	user := fs.String("user", "", "the password that opens the file, subject to the permissions")
+	owner := fs.String("owner", "", "the password that opens it subject to nothing")
+	allow := fs.String("allow", "", "what a reader may do: "+permissionList())
+	aes128 := fs.Bool("aes128", false, "use the older 128-bit method, for readers from before 2008")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	if *user == "" && *owner == "" {
+		return fmt.Errorf("encrypt needs a -user or an -owner password")
+	}
+	perms, err := parsePermissions(*allow)
+	if err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	d.Encrypt(reader.Encryption{
+		UserPassword:  *user,
+		OwnerPassword: *owner,
+		Permissions:   perms,
+		AES128:        *aes128,
+	})
+	return save(d, fs.Arg(1))
+}
+
+// runDecrypt writes the file without its protection. The password to open it
+// with is the global -password.
+func runDecrypt(c *context, args []string) error {
+	fs := flags("decrypt")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	d.Decrypt()
+	return save(d, fs.Arg(1))
+}
+
+// runPermissions says how a file is protected and what it allows.
+func runPermissions(c *context, args []string) error {
+	fs := flags("permissions")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 1, "<in.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	p, ok := d.Protection()
+	if !ok {
+		fmt.Fprintln(c.out, "protection none")
+		return nil
+	}
+	fmt.Fprintf(c.out, "protection %s, revision %d\n", p.Method, p.Revision)
+	fmt.Fprintf(c.out, "opened as  %s\n", openedAs(p.Owner))
+	fmt.Fprintf(c.out, "allows     %s\n", p.Permissions)
+	return nil
+}
+
+// openedAs says which password the file was opened with.
+func openedAs(owner bool) string {
+	if owner {
+		return "the owner, so the permissions do not apply"
+	}
+	return "the user"
 }
