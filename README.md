@@ -24,6 +24,43 @@ An operation therefore costs nothing until it has to, several files can be
 mixed freely, and — the reason the model is shaped this way — the list is a
 plain value that two people can edit at the same time.
 
+## What it does
+
+```sh
+go install github.com/go-pdfkit/ops/cmd/pdfops@latest
+
+pdfops merge whole.pdf part1.pdf part2.pdf
+pdfops select -pages 3-7,last report.pdf extract.pdf
+pdfops delete -pages even scan.pdf fronts.pdf
+pdfops rotate -pages all -by 90 sideways.pdf upright.pdf
+pdfops crop -box 20,20,575,820 wide.pdf trimmed.pdf
+pdfops split -every 10 book.pdf chapters/
+pdfops reverse back-to-front.pdf right-way-round.pdf
+pdfops strip private.pdf clean.pdf
+pdfops info file.pdf
+```
+
+A page range is written `1-3,7,10-` and may say `all`, `even`, `odd` or
+`last`. It keeps its own order and its own repeats, so `select -pages 3-1`
+reverses three pages and `select -pages 1,1` gives you two copies.
+
+`-password` opens an encrypted file; what is written out is not encrypted.
+
+## Verified against real files
+
+Every operation is checked on the same corpus of **118 863 real PDFs** the
+reader is measured against — Matplotlib, cairo, pdfTeX, Ghostscript, Adobe,
+R, Apache FOP, PDF 1.3 through 1.7. For each of the **118 833** that open,
+four properties have to hold, compared on the bytes of every page's content
+stream rather than on an exit status:
+
+- writing the document unchanged reproduces every page;
+- reversing twice is the identity;
+- merging a document with itself doubles it exactly;
+- selecting the last page yields exactly that page.
+
+**All four hold on all 118 833 files.**
+
 ## Testing
 
 ```sh
