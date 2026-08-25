@@ -43,6 +43,10 @@ var commands = []command{
 	{"booklet", "<in.pdf> <out.pdf>", "order and lay out for saddle-stitch printing", runBooklet},
 	{"overlay", "-with <mark.pdf> <in.pdf> <out.pdf>", "draw another file over these pages", runOverlay},
 	{"blank", "-before <page> <in.pdf> <out.pdf>", "insert an empty page", runBlank},
+	{"watermark", "-text <words> <in.pdf> <out.pdf>", "draw pale slanted text across the pages", runWatermark},
+	{"number", "-format <text> <in.pdf> <out.pdf>", "write page numbers at the foot", runNumber},
+	{"bates", "-prefix <text> -start <n> <in.pdf> <out.pdf>", "stamp a running serial, exhibit style", runBates},
+	{"stamp", "-text <words> -at <place> <in.pdf> <out.pdf>", "draw a line of text where you say", runStamp},
 	{"info", "<in.pdf>", "print what the file says about itself", runInfo},
 	{"strip", "<in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
 }
@@ -455,6 +459,123 @@ func runBlank(c *context, args []string) error {
 		return err
 	}
 	if err := d.InsertBlank(*before); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+// positions maps what a person types to where the text goes.
+var positions = map[string]ops.Position{
+	"center": ops.Center, "centre": ops.Center,
+	"top-left": ops.TopLeft, "top": ops.TopCenter, "top-center": ops.TopCenter,
+	"top-right": ops.TopRight, "bottom-left": ops.BottomLeft,
+	"bottom": ops.BottomCenter, "bottom-center": ops.BottomCenter,
+	"bottom-right": ops.BottomRight, "left": ops.MiddleLeft, "right": ops.MiddleRight,
+}
+
+// positionNames lists them for the error message.
+func positionNames() string {
+	names := make([]string, 0, len(positions))
+	for k := range positions {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+func runWatermark(c *context, args []string) error {
+	fs := flags("watermark")
+	pages := fs.String("pages", "all", "the pages to mark")
+	text := fs.String("text", "", "the words to draw")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.Watermark(*pages, *text); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+func runNumber(c *context, args []string) error {
+	fs := flags("number")
+	pages := fs.String("pages", "all", "the pages to number")
+	format := fs.String("format", "{page}", "the text, where {page} and {pages} are filled in")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.PageNumbers(*pages, *format); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+func runBates(c *context, args []string) error {
+	fs := flags("bates")
+	pages := fs.String("pages", "all", "the pages to stamp")
+	prefix := fs.String("prefix", "", "what comes before the number")
+	start := fs.Int("start", 1, "the first number")
+	digits := fs.Int("digits", 6, "how many digits to pad to")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.Bates(*pages, *prefix, *start, *digits); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+func runStamp(c *context, args []string) error {
+	fs := flags("stamp")
+	pages := fs.String("pages", "all", "the pages to stamp")
+	text := fs.String("text", "", "the words to draw")
+	at := fs.String("at", "center", "where to put them: "+positionNames())
+	size := fs.Float64("size", 12, "the point size")
+	rotate := fs.Float64("rotate", 0, "degrees anticlockwise")
+	opacity := fs.Float64("opacity", 1, "from zero to one")
+	bold := fs.Bool("bold", false, "use the bold face")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	pos, ok := positions[strings.ToLower(*at)]
+	if !ok {
+		return fmt.Errorf("%q is not a place; try one of %s", *at, positionNames())
+	}
+	font := ops.Helvetica
+	if *bold {
+		font = ops.HelveticaBold
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.Stamp(*pages, ops.Stamp{
+		Text: *text, Font: font, Size: *size, Rotate: *rotate,
+		Opacity: *opacity, Position: pos,
+	}); err != nil {
 		return err
 	}
 	return save(d, fs.Arg(1))

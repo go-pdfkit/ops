@@ -37,6 +37,9 @@ type Page struct {
 	tiles []tile
 	blank bool
 	size  [2]float64
+
+	// marks is the text drawn on top of whatever the page already shows.
+	marks []stampInstance
 }
 
 // Open reads a PDF file held in memory, with the empty password.
