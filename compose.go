@@ -213,13 +213,13 @@ func (d *Doc) sourceBox(p Page) [4]float64 {
 // left one — files do write them the other way round.
 func rectangle(src *reader.Document, o reader.Object) ([4]float64, bool) {
 	var out [4]float64
-	resolved, _ := src.Resolve(o)
+	resolved := resolve(src, o)
 	arr, ok := reader.ToArray(resolved)
 	if !ok || len(arr) < 4 {
 		return out, false
 	}
 	for i := 0; i < 4; i++ {
-		e, _ := src.Resolve(arr[i])
+		e := resolve(src, arr[i])
 		v, ok := reader.ToFloat(e)
 		if !ok {
 			return out, false
