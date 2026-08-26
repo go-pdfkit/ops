@@ -58,6 +58,8 @@ var commands = []command{
 	{"permissions", "<in.pdf>", "say how the file is protected and what it allows", runPermissions},
 	{"text", "[-pages <range>] [-layout] <in.pdf>", "read the text off the pages", runText},
 	{"images", "[-pages <range>] <in.pdf> <out-directory>", "write out the pictures the pages place", runImages},
+	{"fields", "<in.pdf>", "list what a form asks for and what it holds", runFields},
+	{"fill", "-set <name>=<value> [-set ...] <in.pdf> <out.pdf>", "fill in a form and save it", runFill},
 }
 
 // run is the whole program, so that the tests can drive it.
@@ -898,4 +900,108 @@ func (c *context) read(path string) (*reader.Document, error) {
 		return nil, err
 	}
 	return reader.OpenWithPassword(b, c.password)
+}
+
+// runFields lists a form's fields: what each is called, what sort of thing it
+// is, and what it holds. A name is what fill takes, so this is how anybody
+// finds out what to type.
+func runFields(c *context, args []string) error {
+	fs := flags("fields")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 1, "<in.pdf>"); err != nil {
+		return err
+	}
+	b, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	filling, ok, err := ops.OpenFormWithPassword(b, c.password)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		fmt.Fprintln(c.out, "the file has no form in it")
+		return nil
+	}
+	form := filling.Form()
+	if form.HasXFA() {
+		fmt.Fprintln(c.out, "note: the file also carries an XFA form, which is not read; the standard one is.")
+	}
+	for _, f := range form.Fields() {
+		marks := ""
+		if f.ReadOnly {
+			marks += " read-only"
+		}
+		if f.Required {
+			marks += " required"
+		}
+		if f.MaxLen > 0 {
+			marks += fmt.Sprintf(" max=%d", f.MaxLen)
+		}
+		fmt.Fprintf(c.out, "%-40s %-9s %q%s\n", f.Name, f.Kind, f.Value, marks)
+		for _, o := range f.Options {
+			fmt.Fprintf(c.out, "%-40s   row %q\n", "", o.Value)
+		}
+		if len(f.States()) > 0 {
+			fmt.Fprintf(c.out, "%-40s   buttons %v\n", "", f.States())
+		}
+	}
+	return nil
+}
+
+// runFill fills a form in and writes the result.
+//
+// The file it writes is the one it read with the changes appended after it,
+// which is how everything that saves a form saves one: nothing already in the
+// file is rewritten, so whatever this does not understand survives.
+func runFill(c *context, args []string) error {
+	fs := flags("fill")
+	var set stringList
+	fs.Var(&set, "set", "a field to fill, as <name>=<value>; may be given more than once")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	if len(set) == 0 {
+		return fmt.Errorf("nothing to fill in: give at least one -set <name>=<value>")
+	}
+	b, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	filling, ok, err := ops.OpenFormWithPassword(b, c.password)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%s has no form in it", fs.Arg(0))
+	}
+	for _, pair := range set {
+		name, value, found := strings.Cut(pair, "=")
+		if !found {
+			return fmt.Errorf("-set wants <name>=<value>, not %q", pair)
+		}
+		if err := filling.Fill(name, value); err != nil {
+			return err
+		}
+	}
+	out, err := filling.Bytes()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(fs.Arg(1), out, 0o644)
+}
+
+// A stringList is a flag that may be given more than once.
+type stringList []string
+
+func (s *stringList) String() string { return strings.Join(*s, ",") }
+
+func (s *stringList) Set(v string) error {
+	*s = append(*s, v)
+	return nil
 }
