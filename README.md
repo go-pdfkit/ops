@@ -134,3 +134,49 @@ Documentation for all of it: <https://go-pdfkit.github.io/docs/>
 ## License
 
 BSD-3-Clause — see [LICENSE](LICENSE). Copyright the go-pdfkit/ops authors.
+
+## Forms
+
+`pdfops fields` lists what a form asks for and what it holds; `pdfops fill`
+fills it in and saves it.
+
+```
+$ pdfops fields fw9.pdf
+note: the file also carries an XFA form, which is not read; the standard one is.
+topmostSubform[0].Page1[0].f1_01[0]                       text      ""
+topmostSubform[0].Page1[0].Boxes3a-b_ReadOrder[0].c1_1[0] checkbox  "Off"
+                                                            buttons [1]
+
+$ pdfops fill -set 'topmostSubform[0].Page1[0].f1_01[0]=Wolfgang Amadeus Mozart' \
+              -set 'topmostSubform[0].Page1[0].Boxes3a-b_ReadOrder[0].c1_1[0]=1' \
+              fw9.pdf filled.pdf
+```
+
+A filled form is written as an **incremental update**: the original file, byte
+for byte, with the objects that changed appended after it and a new
+cross-reference section pointing back at the old one. That is how every program
+that saves a form saves one, and it is the safest thing a program can do to
+somebody's document — nothing already there is rewritten, so whatever this does
+not understand survives untouched, and if the update is wrong the original is
+still the first part of the file.
+
+The update says where its objects went **the same way the file already does**.
+A file whose cross-reference is a stream cannot be pointed back at by a plain
+table: a reader following `/Prev` would find an object where it expected the
+word `xref`. That is not a nicety — macOS's own renderer draws nothing at all
+for such a file, which is how the mistake was found.
+
+Two things it will not do. A document that had to be **repaired** to be read has
+no cross-reference section worth pointing back at, so it is refused rather than
+added to. A document that is **encrypted** has every string and stream in it
+written through a key, and this does not yet write into one.
+
+Measured on a real form: `fw9.pdf` filled in every field, written out, read
+back with every value in place, and rendered by macOS — which drew what we
+drew, in the same places, comb cells and ticks included.
+
+⚠ **Filling a form is the only verb that keeps one.** Every other verb here
+takes the pages apart and builds a new document round them, and a form is tied
+into a document by object number in a dozen places at once — so merging,
+splitting or rotating a form's pages loses the form. Use `fill` on the file
+itself.
