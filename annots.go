@@ -69,7 +69,7 @@ func (d *Doc) Flatten() { d.flatten = true }
 
 // copyAnnots rebuilds a page's annotations, pointing whatever they refer to at
 // the pages of this document rather than of the one they came from.
-func (d *Doc) copyAnnots(w *reader.Writer, p Page, src reader.Dict, where destinations) reader.Array {
+func (d *Doc) copyAnnots(w *reader.Writer, p Page, src reader.Dict, where destinations, kept *keptAnnots) reader.Array {
 	if d.dropAnnots || d.flatten {
 		return nil
 	}
@@ -83,11 +83,72 @@ func (d *Doc) copyAnnots(w *reader.Writer, p Page, src reader.Dict, where destin
 		if !ok {
 			continue
 		}
-		if copied := d.copyAnnot(w, p, annot, where); copied != nil {
-			out = append(out, w.Add(copied))
+		copied := d.copyAnnot(w, p, annot, where)
+		if copied == nil {
+			continue
 		}
+		// The annotation is given its number now and written at the end,
+		// because a form's fields have to be able to point at it and the
+		// widget has to be able to point back — and neither is known until
+		// every page has been walked.
+		ref := w.Reserve()
+		kept.add(p.src, e, ref, copied)
+		out = append(out, ref)
 	}
 	return out
+}
+
+// A keptAnnots remembers where each annotation that survived ended up, so that
+// the form it belonged to can be pointed at it again. Without this a document
+// rebuilt around a form keeps every widget on the page and loses the field
+// list that gives them meaning — which is not a form with something missing
+// but half a form, and worse than none.
+type keptAnnots struct {
+	// at is the new reference for each source annotation, by the document it
+	// came from and the number it had there.
+	at map[annotKey]reader.Ref
+	// dict is what will be written at that reference, still changeable.
+	dict map[reader.Ref]reader.Dict
+	// order is the references in the order they were made, so that what is
+	// written comes out the same way every time.
+	order []reader.Ref
+}
+
+// An annotKey names one annotation of one source document.
+type annotKey struct {
+	src *reader.Document
+	num int
+}
+
+func newKeptAnnots() *keptAnnots {
+	return &keptAnnots{at: map[annotKey]reader.Ref{}, dict: map[reader.Ref]reader.Dict{}}
+}
+
+// add records one annotation that survived.
+func (k *keptAnnots) add(src *reader.Document, was reader.Object, ref reader.Ref, dict reader.Dict) {
+	if old, ok := was.(reader.Ref); ok {
+		k.at[annotKey{src, old.Num}] = ref
+	}
+	k.dict[ref] = dict
+	k.order = append(k.order, ref)
+}
+
+// find says where a source annotation ended up.
+func (k *keptAnnots) find(src *reader.Document, o reader.Object) (reader.Ref, bool) {
+	ref, ok := o.(reader.Ref)
+	if !ok {
+		return reader.Ref{}, false
+	}
+	to, ok := k.at[annotKey{src, ref.Num}]
+	return to, ok
+}
+
+// write puts every annotation down, once everything that had to point at them
+// has been settled.
+func (k *keptAnnots) write(w *reader.Writer) {
+	for _, ref := range k.order {
+		w.Put(ref, k.dict[ref])
+	}
 }
 
 // annotsOf resolves a page's /Annots to a list.

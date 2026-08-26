@@ -39,6 +39,7 @@ func (d *Doc) Bytes() ([]byte, error) {
 	// Pages are numbered first and written last: what goes on one of them may
 	// need to name another, and a link cannot be written before its target has
 	// a number.
+	kept := newKeptAnnots()
 	refs := make([]reader.Ref, len(d.pages))
 	dicts := make([]reader.Dict, len(d.pages))
 	where := destinations{}
@@ -51,7 +52,7 @@ func (d *Doc) Bytes() ([]byte, error) {
 		}
 	}
 	for i, p := range d.pages {
-		dicts[i] = d.buildPage(w, p, pagesRef, where)
+		dicts[i] = d.buildPage(w, p, pagesRef, where, kept)
 	}
 	kids := make(reader.Array, 0, len(d.pages))
 	for i := range d.pages {
@@ -65,6 +66,8 @@ func (d *Doc) Bytes() ([]byte, error) {
 	})
 
 	catalog := reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef}
+	d.keepCatalogue(w, catalog, kept)
+	kept.write(w)
 	if outlines := d.writeOutlines(w, where, refs); outlines != nil {
 		catalog["Outlines"] = outlines
 	}
@@ -76,11 +79,11 @@ func (d *Doc) Bytes() ([]byte, error) {
 }
 
 // buildPage assembles one page's dictionary without writing it.
-func (d *Doc) buildPage(w *reader.Writer, p Page, parent reader.Ref, where destinations) reader.Dict {
+func (d *Doc) buildPage(w *reader.Writer, p Page, parent reader.Ref, where destinations, kept *keptAnnots) reader.Dict {
 	if p.blank || p.tiles != nil {
 		return d.buildMadePage(w, p, parent)
 	}
-	return d.buildBorrowedPage(w, p, parent, where)
+	return d.buildBorrowedPage(w, p, parent, where, kept)
 }
 
 // buildMadePage assembles a page this package built rather than borrowed.
@@ -121,7 +124,7 @@ var rebuiltPageKeys = map[reader.Name]bool{
 var sanitisedPageKeys = map[reader.Name]bool{"AF": true}
 
 // buildBorrowedPage copies a page out of the file it came from.
-func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, where destinations) reader.Dict {
+func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, where destinations, kept *keptAnnots) reader.Dict {
 	src, _ := p.src.Page(p.number)
 	copied := reader.Dict{}
 	for k, v := range src {
@@ -147,7 +150,7 @@ func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, whe
 	if len(extra) > 0 {
 		d.decorate(w, p, src, copied, extra, resources)
 	}
-	if annots := d.copyAnnots(w, p, src, where); len(annots) > 0 {
+	if annots := d.copyAnnots(w, p, src, where, kept); len(annots) > 0 {
 		copied["Annots"] = annots
 	}
 	return copied
