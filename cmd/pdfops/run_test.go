@@ -846,3 +846,257 @@ func TestEveryWayAPictureIsNamed(t *testing.T) {
 		}
 	}
 }
+
+// pageWithForm writes a one-page document with a form on it: a box to type in,
+// a box to tick with two buttons, and a list to choose from.
+func pageWithForm(t *testing.T, needAppearances bool) string {
+	t.Helper()
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	pageRef := w.Reserve()
+	blank := w.Add(&reader.Stream{Dict: reader.Dict{"BBox": reader.Array{
+		reader.Integer(0), reader.Integer(0), reader.Integer(12), reader.Integer(12)}},
+		Raw: []byte("")})
+	text := w.Add(reader.Dict{
+		"FT": reader.Name("Tx"), "T": reader.String("name"),
+		"Type": reader.Name("Annot"), "Subtype": reader.Name("Widget"), "P": pageRef,
+		"Rect": reader.Array{reader.Integer(20), reader.Integer(150),
+			reader.Integer(180), reader.Integer(175)},
+		"MaxLen": reader.Integer(40),
+		"Ff":     reader.Integer(1 << 1),
+	})
+	tick := w.Add(reader.Dict{
+		"FT": reader.Name("Btn"), "T": reader.String("agree"),
+		"Type": reader.Name("Annot"), "Subtype": reader.Name("Widget"), "P": pageRef,
+		"Rect": reader.Array{reader.Integer(20), reader.Integer(120),
+			reader.Integer(32), reader.Integer(132)},
+		"AP": reader.Dict{"N": reader.Dict{"Off": blank, "Yes": blank}},
+	})
+	list := w.Add(reader.Dict{
+		"FT": reader.Name("Ch"), "T": reader.String("where"),
+		"Ff":   reader.Integer(1 << 17),
+		"Type": reader.Name("Annot"), "Subtype": reader.Name("Widget"), "P": pageRef,
+		"Rect": reader.Array{reader.Integer(20), reader.Integer(80),
+			reader.Integer(180), reader.Integer(100)},
+		"Opt": reader.Array{
+			reader.Array{reader.String("FR"), reader.String("France")},
+			reader.Array{reader.String("BE"), reader.String("Belgique")},
+		},
+	})
+	locked := w.Add(reader.Dict{
+		"FT": reader.Name("Tx"), "T": reader.String("serial"),
+		"Ff": reader.Integer(1), "V": reader.String("A-1756"),
+		"Type": reader.Name("Annot"), "Subtype": reader.Name("Widget"), "P": pageRef,
+		"Rect": reader.Array{reader.Integer(20), reader.Integer(50),
+			reader.Integer(180), reader.Integer(70)},
+	})
+	w.Put(pageRef, reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox": reader.Array{reader.Integer(0), reader.Integer(0),
+			reader.Integer(200), reader.Integer(200)},
+		"Annots":   reader.Array{text, tick, list, locked},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte("")})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	form := reader.Dict{
+		"Fields": reader.Array{text, tick, list, locked},
+		"DA":     reader.String("/Helv 0 Tf 0 g"),
+		"DR": reader.Dict{"Font": reader.Dict{"Helv": w.Add(reader.Dict{
+			"Type": reader.Name("Font"), "Subtype": reader.Name("Type1"),
+			"BaseFont": reader.Name("Helvetica"),
+			"Encoding": reader.Name("WinAnsiEncoding")})}},
+	}
+	if needAppearances {
+		form["NeedAppearances"] = reader.Bool(true)
+	}
+	root := w.Add(reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef,
+		"AcroForm": w.Add(form)})
+	out, err := w.Finish(reader.Dict{"Root": root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "form.pdf")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestFieldsVerb(t *testing.T) {
+	in := pageWithForm(t, true)
+	code, out, errOut := exec("fields", in)
+	if code != 0 {
+		t.Fatalf("fields said %d: %s", code, errOut)
+	}
+	for _, want := range []string{
+		"name", "text", "agree", "checkbox", "where", "combo",
+		"row \"FR\"", "buttons [Yes]", "read-only", "required", "max=40", "\"A-1756\"",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the listing does not hold %q:\n%s", want, out)
+		}
+	}
+	for _, args := range [][]string{
+		{"fields"},
+		{"fields", "nowhere.pdf"},
+		{"fields", "-nonsense", in},
+	} {
+		if code, _, _ := exec(args...); code == 0 {
+			t.Errorf("%v was allowed", args)
+		}
+	}
+}
+
+func TestFieldsVerbOnAFileWithNoForm(t *testing.T) {
+	code, out, errOut := exec("fields", pageWithText(t))
+	if code != 0 {
+		t.Fatalf("fields said %d: %s", code, errOut)
+	}
+	if !strings.Contains(out, "no form") {
+		t.Errorf("said %q", out)
+	}
+}
+
+func TestFieldsVerbSaysWhenThereIsAlsoAnXFAForm(t *testing.T) {
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	field := w.Add(reader.Dict{"FT": reader.Name("Tx"), "T": reader.String("a"),
+		"Subtype": reader.Name("Widget"),
+		"Rect": reader.Array{reader.Integer(0), reader.Integer(0),
+			reader.Integer(10), reader.Integer(10)}})
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox": reader.Array{reader.Integer(0), reader.Integer(0),
+			reader.Integer(200), reader.Integer(200)},
+		"Annots":   reader.Array{field},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte("")})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef,
+		"AcroForm": w.Add(reader.Dict{"Fields": reader.Array{field},
+			"XFA": w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte("<xdp/>")})})})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "xfa.pdf")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, printed, _ := exec("fields", path)
+	if !strings.Contains(printed, "XFA") {
+		t.Errorf("said nothing about the XFA form:\n%s", printed)
+	}
+}
+
+func TestFillVerb(t *testing.T) {
+	in := pageWithForm(t, false)
+	out := filepath.Join(t.TempDir(), "filled.pdf")
+	code, _, errOut := exec("fill",
+		"-set", "name=Wolfgang Amadeus Mozart",
+		"-set", "agree=yes",
+		"-set", "where=FR",
+		in, out)
+	if code != 0 {
+		t.Fatalf("fill said %d: %s", code, errOut)
+	}
+	_, listed, _ := exec("fields", out)
+	for _, want := range []string{"\"Wolfgang Amadeus Mozart\"", "\"Yes\"", "\"FR\""} {
+		if !strings.Contains(listed, want) {
+			t.Errorf("the filled file does not hold %s:\n%s", want, listed)
+		}
+	}
+}
+
+func TestFillVerbRefusesWhatItCannotDo(t *testing.T) {
+	in := pageWithForm(t, false)
+	out := filepath.Join(t.TempDir(), "filled.pdf")
+	for _, c := range []struct {
+		why  string
+		args []string
+	}{
+		{"no arguments at all", []string{"fill"}},
+		{"a flag that does not exist", []string{"fill", "-nonsense", in, out}},
+		{"nothing to set", []string{"fill", in, out}},
+		{"a setting that is not name=value", []string{"fill", "-set", "name", in, out}},
+		{"a field that does not exist", []string{"fill", "-set", "nowhere=x", in, out}},
+		{"a field the document says may not be changed",
+			[]string{"fill", "-set", "serial=x", in, out}},
+		{"a file that is not there", []string{"fill", "-set", "name=x", "nowhere.pdf", out}},
+		{"a file with no form", []string{"fill", "-set", "name=x", pageWithText(t), out}},
+		{"somewhere to write that is not writable",
+			[]string{"fill", "-set", "name=x", in, filepath.Join(out, "no", "such")}},
+	} {
+		if code, _, _ := exec(c.args...); code == 0 {
+			t.Errorf("%s was allowed", c.why)
+		}
+	}
+}
+
+func TestFillVerbOnAFileThatCannotBeAddedTo(t *testing.T) {
+	// A file the reader had to repair has no cross-reference section worth
+	// pointing back at.
+	in := pageWithForm(t, false)
+	b, err := os.ReadFile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := bytes.Replace(b, []byte("startxref"), []byte("startxrEf"), 1)
+	path := filepath.Join(t.TempDir(), "broken.pdf")
+	if err := os.WriteFile(path, broken, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _ := exec("fill", "-set", "name=x", path,
+		filepath.Join(t.TempDir(), "out.pdf")); code == 0 {
+		t.Error("a file with no usable table was filled in anyway")
+	}
+	if code, _, _ := exec("fields", path); code == 0 {
+		t.Error("a file with no usable table was listed anyway")
+	}
+}
+
+func TestTheListOfSettings(t *testing.T) {
+	var s stringList
+	if got := s.String(); got != "" {
+		t.Errorf("an empty list says %q", got)
+	}
+	if err := s.Set("a=1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Set("b=2"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.String(); got != "a=1,b=2" {
+		t.Errorf("the list says %q", got)
+	}
+}
+
+func TestFillVerbOnAFieldWithNowhereToBeWritten(t *testing.T) {
+	// A field written into the list rather than as an object of its own can
+	// be filled in and cannot be written back, and saying so is better than
+	// writing a file whose value and whose drawing disagree.
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox": reader.Array{reader.Integer(0), reader.Integer(0),
+			reader.Integer(200), reader.Integer(200)},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte("")})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef,
+		"AcroForm": w.Add(reader.Dict{"DA": reader.String("/Helv 0 Tf 0 g"),
+			"Fields": reader.Array{reader.Dict{
+				"FT": reader.Name("Tx"), "T": reader.String("inline"),
+				"Rect": reader.Array{reader.Integer(0), reader.Integer(0),
+					reader.Integer(100), reader.Integer(20)}}}})})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "inline.pdf")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _ := exec("fill", "-set", "inline=x", path,
+		filepath.Join(t.TempDir(), "out.pdf")); code == 0 {
+		t.Error("a field with nowhere to be written was written anyway")
+	}
+}
