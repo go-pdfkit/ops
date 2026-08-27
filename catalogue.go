@@ -38,13 +38,6 @@ var sensitiveKeys = map[reader.Name]bool{"Metadata": true}
 // rather than describing it, so copying one across a rebuild would leave it
 // naming objects that are no longer there.
 //
-//   - /StructTreeRoot, the marked-up structure a screen reader follows. Its
-//     elements name the page each belongs to and the numbered marks inside
-//     that page's content, and its parent tree is indexed by a number the page
-//     carries. Carrying it means rebuilding all three, and a structure tree
-//     that points at the wrong pages is worse than none: a reader would read
-//     the document aloud in the wrong order rather than fall back on the text.
-//     This is the one worth doing next.
 //   - /Names, the name trees: named destinations point at pages, embedded
 //     files travel with the document, and one of the trees is where a file
 //     keeps its JavaScript.
@@ -52,9 +45,30 @@ var sensitiveKeys = map[reader.Name]bool{"Metadata": true}
 //     the bytes the signature was taken over, so the signature is void and the
 //     permission it granted with it.
 //   - /OpenAction and /AA, which run when the document is opened.
+//
+// /StructTreeRoot, the marked-up structure a screen reader follows, is
+// rebuilt: see structtree.go. Three parts of it are left out, and each is left
+// out because it cannot be placed rather than because it is awkward.
+//
+//   - A mark inside a stream that no surviving page draws. Such a mark is
+//     numbered within its own stream and filed under a key that stream
+//     carries, so it can only be carried when the stream is still drawn — and
+//     109 of the corpus's 215 such marks named a stream that no page of the
+//     source drew either.
+//   - A structure element's /Ref, which names other structure elements. It
+//     cannot be answered while the rebuild is still deciding which of them
+//     survive, and copied as it stands it would drag a second copy of the
+//     source's tree — and of the source's pages behind it — into the file. No
+//     file in the corpus has one; it is PDF 2.0.
+//   - The structure of pages from more than one file. Two files have two
+//     trees, and two /RoleMap and /ClassMap dictionaries in which the same
+//     name may stand for two different things; a merged tree read through
+//     either one of them would describe the other file's pages wrongly, and
+//     there is no honest way to choose. Such a document keeps its pages and
+//     nothing above them, as it already did for the catalogue and the form.
 
 // keepCatalogue carries across what the source document said about itself.
-func (d *Doc) keepCatalogue(w *reader.Writer, catalog reader.Dict, kept *keptAnnots) {
+func (d *Doc) keepCatalogue(w *reader.Writer, catalog reader.Dict, kept *keptAnnots, built []builtPage) {
 	src, ok := d.singleSource()
 	if !ok {
 		// Pages from several files have several catalogues, and there is no
@@ -76,6 +90,9 @@ func (d *Doc) keepCatalogue(w *reader.Writer, catalog reader.Dict, kept *keptAnn
 	}
 	if form := d.keepForm(w, src, source, kept); form != nil {
 		catalog["AcroForm"] = w.Add(form)
+	}
+	if tree := d.keepStructure(w, src, source, kept, built); tree != nil {
+		catalog["StructTreeRoot"] = tree
 	}
 }
 

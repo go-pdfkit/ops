@@ -84,6 +84,35 @@ form submission, the annotation types that exist to play or embed
 something, and files associated with a page. A link to the web is not
 executable and stays.
 
+### What a screen reader follows
+
+A tagged document says which run of marks on which page is a heading, a
+paragraph, a table cell, the label of a form field. That is the reading order a
+screen reader follows, and for a government form it is often what the law
+requires — RGAA in France, Section 508 in the United States, EN 301 549 in the
+EU. It cannot be copied across a rebuild: every part of it points into the
+document, and the number tree that indexes it is keyed by a number each page
+carries. So it is rebuilt, element by element, around the pages that survived,
+and those numbers are handed out afresh. A page that kept the number it had in
+a file it is no longer part of is a page a reader would look up and be told,
+with every confidence, about somebody else's.
+
+An element whose every page has gone is removed and its parent pruned; one with
+some pages gone keeps the children that are left. An empty table cell is kept,
+because the shape of a table is part of what it says. A page written twice
+carries the structure once, on the first copy, since an element names one page.
+Merging two files carries no tree at all: two files have two role maps in which
+the same name may mean two different things, and there is no honest way to
+choose between them.
+
+Of **1 633 real government forms** from eighteen issuers, 1 021 carry a
+structure tree. After a rotate **1 014 still do** — the seven that do not are
+the seven whose tree was empty in the file we were given — and **991 of the
+1 021 are identical down to the last element, mark and annotation reference**.
+The thirty that differ are accounted for one by one in the commit that added
+this. What cannot be carried is named in `catalogue.go` with the reason, rather
+than disappearing quietly.
+
 Text is drawn in the four faces every viewer already has — Helvetica,
 Helvetica-Bold, Courier and Courier-Bold — so nothing is embedded and a
 watermark costs about a kilobyte. Stamp text may say `{page}`, `{pages}`

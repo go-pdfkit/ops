@@ -18,6 +18,16 @@ type pageKey struct {
 	num int
 }
 
+// A builtPage is one page of the file being written: where it was borrowed
+// from, the number it was given here, and its dictionary, which is still open
+// for changes until it is put down.
+type builtPage struct {
+	src  *reader.Document
+	num  int
+	ref  reader.Ref
+	dict reader.Dict
+}
+
 // Bytes writes the document out as a PDF file. Every borrowed page is copied
 // out of the file it came from with the attributes it inherited written onto
 // it, so pages from different documents keep their own geometry and resources.
@@ -54,6 +64,18 @@ func (d *Doc) Bytes() ([]byte, error) {
 	for i, p := range d.pages {
 		dicts[i] = d.buildPage(w, p, pagesRef, where, kept)
 	}
+
+	// The catalogue is rebuilt before the pages are put down, not after: what
+	// it carries across may have something to write onto a page — the number
+	// under which a page's structure is filed — and a page that has already
+	// been written cannot be added to.
+	built := make([]builtPage, len(d.pages))
+	for i, p := range d.pages {
+		built[i] = builtPage{src: p.src, num: p.number, ref: refs[i], dict: dicts[i]}
+	}
+	catalog := reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef}
+	d.keepCatalogue(w, catalog, kept, built)
+
 	kids := make(reader.Array, 0, len(d.pages))
 	for i := range d.pages {
 		w.Put(refs[i], dicts[i])
@@ -64,9 +86,6 @@ func (d *Doc) Bytes() ([]byte, error) {
 		"Kids":  kids,
 		"Count": reader.Integer(len(kids)),
 	})
-
-	catalog := reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef}
-	d.keepCatalogue(w, catalog, kept)
 	kept.write(w)
 	if outlines := d.writeOutlines(w, where, refs); outlines != nil {
 		catalog["Outlines"] = outlines
@@ -115,6 +134,13 @@ var rebuiltPageKeys = map[reader.Name]bool{
 	"Rotate": true, // this document decides which way up a page goes
 	"Annots": true, // rebuilt so that links can be remapped
 	"AA":     true, // a page's own actions run without anyone asking
+
+	// A page's number in the structure tree's parent tree is handed out
+	// afresh, because the pages are not the ones the source had. Keeping the
+	// number a page had in a file it is no longer part of is worse than
+	// dropping it: a reader would look the number up and be told, with every
+	// confidence, about somebody else's page.
+	"StructParents": true,
 }
 
 // sanitisedPageKeys are the entries of a page that only a sanitised file

@@ -45,6 +45,10 @@ var annotKeysRebuilt = map[reader.Name]bool{
 	"Dest": true, // remapped
 	"A":    true, // remapped, and filtered when sanitising
 	"AA":   true, // an annotation's own actions run without anyone asking
+
+	// The number under which an annotation is filed in the structure tree's
+	// parent tree is handed out afresh, for the same reason a page's is.
+	"StructParent": true,
 }
 
 // RemoveAnnotations drops every annotation: links, comments, form fields and
@@ -124,10 +128,16 @@ func newKeptAnnots() *keptAnnots {
 	return &keptAnnots{at: map[annotKey]reader.Ref{}, dict: map[reader.Ref]reader.Dict{}}
 }
 
-// add records one annotation that survived.
+// add records one annotation that survived. When a page is written twice — a
+// selection may ask for the same page more than once — the first copy is the
+// one anything pointing at that annotation is pointed at, which is the same
+// choice the destination map makes for the page itself and the copy the
+// structure tree describes.
 func (k *keptAnnots) add(src *reader.Document, was reader.Object, ref reader.Ref, dict reader.Dict) {
 	if old, ok := was.(reader.Ref); ok {
-		k.at[annotKey{src, old.Num}] = ref
+		if _, already := k.at[annotKey{src, old.Num}]; !already {
+			k.at[annotKey{src, old.Num}] = ref
+		}
 	}
 	k.dict[ref] = dict
 	k.order = append(k.order, ref)
