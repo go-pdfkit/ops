@@ -353,8 +353,11 @@ func contentStream(data []byte, extra reader.Dict) *reader.Stream {
 func (d *Doc) madeContent(w *reader.Writer, p Page, area [4]float64) ([]byte, reader.Dict) {
 	var content []byte
 	resources := reader.Dict{}
-	if p.tiles != nil {
+	switch {
+	case p.tiles != nil:
 		content, resources = d.composeContent(w, p)
+	case p.picture != nil:
+		content, resources = d.pictureContent(w, p, area)
 	}
 	if len(p.marks) > 0 {
 		stamp, fonts, alpha := d.stampContent(p, area)

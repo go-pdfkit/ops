@@ -53,6 +53,9 @@ type Page struct {
 	blank bool
 	size  [2]float64
 
+	// picture is set when the page is one image made into a page.
+	picture *picture
+
 	// marks is the text drawn on top of whatever the page already shows.
 	marks []stampInstance
 }
