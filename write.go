@@ -99,7 +99,7 @@ func (d *Doc) Bytes() ([]byte, error) {
 
 // buildPage assembles one page's dictionary without writing it.
 func (d *Doc) buildPage(w *reader.Writer, p Page, parent reader.Ref, where destinations, kept *keptAnnots) reader.Dict {
-	if p.blank || p.tiles != nil {
+	if p.blank || p.tiles != nil || p.picture != nil {
 		return d.buildMadePage(w, p, parent)
 	}
 	return d.buildBorrowedPage(w, p, parent, where, kept)
