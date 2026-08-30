@@ -26,6 +26,9 @@ jobs:
           check-latest: true
           cache: true
 
+      - name: Install poppler, the foreign judge the render tests print by
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
+
       - name: go vet
         run: go vet ./...
 
