@@ -32,6 +32,13 @@ type Doc struct {
 	// of its caller's rather than of anybody else's.
 	outline []Bookmark
 
+	// attached are files to put inside the document, and dropped are the names
+	// of files it came in with that are not to go back out. A file the source
+	// carried is kept by being copied at write time rather than held here, so
+	// a document with a large attachment is not a large document in memory.
+	attached []Attachment
+	dropped  []string
+
 	// How the file is written: packed into compressed object streams, and
 	// protected or not.
 	packed  bool
