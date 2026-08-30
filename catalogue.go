@@ -38,9 +38,11 @@ var sensitiveKeys = map[reader.Name]bool{"Metadata": true}
 // rather than describing it, so copying one across a rebuild would leave it
 // naming objects that are no longer there.
 //
-//   - /Names, the name trees: named destinations point at pages, embedded
-//     files travel with the document, and one of the trees is where a file
-//     keeps its JavaScript.
+//   - /Names /Dests, where named destinations point at pages this may have
+//     reordered or removed, and /Names /JavaScript, which is where a document
+//     keeps code that runs. /Names /EmbeddedFiles IS carried: see attach.go —
+//     a file inside a document belongs to no page, so nothing this does can
+//     invalidate it, and dropping it loses something no page shows is there.
 //   - /Perms, which records what a signature allows. Every verb here rewrites
 //     the bytes the signature was taken over, so the signature is void and the
 //     permission it granted with it.
@@ -74,7 +76,9 @@ func (d *Doc) keepCatalogue(w *reader.Writer, catalog reader.Dict, kept *keptAnn
 		// Pages from several files have several catalogues, and there is no
 		// honest way to choose between them or to merge two forms whose
 		// fields may be named the same. Such a document keeps its pages and
-		// nothing above them.
+		// nothing above them — except the files it was handed, which belong to
+		// no page and so cannot be in conflict.
+		d.keepAttachments(w, catalog)
 		return
 	}
 	// A document that opened has a catalogue; one that somehow came back
@@ -93,6 +97,20 @@ func (d *Doc) keepCatalogue(w *reader.Writer, catalog reader.Dict, kept *keptAnn
 	}
 	if tree := d.keepStructure(w, src, source, kept, built); tree != nil {
 		catalog["StructTreeRoot"] = tree
+	}
+	d.keepAttachments(w, catalog)
+}
+
+// keepAttachments puts the files the document carries back into the catalogue.
+//
+// It is called for a document with one source and for one with several, unlike
+// everything else here: two documents' forms cannot be merged and two
+// catalogues cannot be chosen between, but two sets of files can simply both
+// be carried. What cannot be carried is two files under one name, and Attach
+// refuses that.
+func (d *Doc) keepAttachments(w *reader.Writer, catalog reader.Dict) {
+	if tree := d.writeAttachments(w); tree != nil {
+		catalog["Names"] = w.Add(reader.Dict{"EmbeddedFiles": tree})
 	}
 }
 
