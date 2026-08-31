@@ -4,6 +4,8 @@ github.com/ajroetker/go-jpeg2000 v0.0.2 h1:ni8brffZrci4Kacx3nM5d92ipmTDfak84KgHY
 github.com/ajroetker/go-jpeg2000 v0.0.2/go.mod h1:7ld88W47lZy0x8gRQesRGAonDPOpr6ev8rckjCAfbzE=
 github.com/go-gfx/gfx v0.16.0 h1:HYlQrz2kHm+Vg1aBotnO6O9yfadNqWVrPK+b0uqxtKg=
 github.com/go-gfx/gfx v0.16.0/go.mod h1:VAK6hgCgkhT3j3ek2K7G8zDfkCPD3RCF45UbcRlCV8Q=
+github.com/go-gfx/gfx v0.19.0 h1:nA2Eg8Aq2kytR5Hrm/eQ6618w4vT0+Ao8BMZiuYh84c=
+github.com/go-gfx/gfx v0.19.0/go.mod h1:VAK6hgCgkhT3j3ek2K7G8zDfkCPD3RCF45UbcRlCV8Q=
 github.com/go-opentype/fonts v0.9.0 h1:slB6OB3riLyUPrOxqXe0s6/AzdenF1TDvCN8N87hhQk=
 github.com/go-opentype/fonts v0.9.0/go.mod h1:C6yQL2apHItfEZ5hztpsHF0S5mlX/hklLlq/Z5fRG/g=
 github.com/go-opentype/opentype v0.12.0 h1:wBlcDi+3ZaNZXEt5z+Ixr11/cYYwi5W+jX6yTl/qr1I=
@@ -12,6 +14,8 @@ github.com/go-pdfkit/extract v0.3.0 h1:w1ansrvMNqd+Hy1p5fo1orh6hM8meb+xCNKNap/7o
 github.com/go-pdfkit/extract v0.3.0/go.mod h1:EOWOcx3o0HDC3ryCMoE9pwNIb3mwVmnXBSpTRfO1VdY=
 github.com/go-pdfkit/forms v0.2.2 h1:tGnENs09LBUBppSrH0dGenV8KCQcbngsi+OatWID90Y=
 github.com/go-pdfkit/forms v0.2.2/go.mod h1:dQ4FzO6qF7RJh6oEa0dkgL0i8hKBmm/e7hj4XC56h5Q=
+github.com/go-pdfkit/forms v0.3.0 h1:qIwzCTYj2lOYEY34Fh8bLGS8TXH5COkJMiog9ASotXc=
+github.com/go-pdfkit/forms v0.3.0/go.mod h1:HKJuaEIG1qd0C/VJxVyco51+e+YS/Nu9j9gVln+wyoQ=
 github.com/go-pdfkit/pdffont v0.3.1 h1:+K7opHGRERDZ5EMkA12s1GT48t8GpncArhnyzyc5bxU=
 github.com/go-pdfkit/pdffont v0.3.1/go.mod h1:eFJ/7t9AvcX76KY5qNJMMKetz8hUUUdVM1qSWLi3S1g=
 github.com/go-pdfkit/reader v0.6.0 h1:KAabNOYUcTlZlNBTbG9bEhWP1NiZhjuhzUdavdTdfes=
