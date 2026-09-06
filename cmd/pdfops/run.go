@@ -60,6 +60,7 @@ var commands = []command{
 	{"images", "[-pages <range>] <in.pdf> <out-directory>", "write out the pictures the pages place", runImages},
 	{"fields", "<in.pdf>", "list what a form asks for and what it holds", runFields},
 	{"fill", "-set <name>=<value> [-set ...] <in.pdf> <out.pdf>", "fill in a form and save it", runFill},
+	{"xfa", "<in.pdf> <out.pdf>", "draw the form inside a file whose pages are a placeholder", runXFA},
 }
 
 // run is the whole program, so that the tests can drive it.
@@ -927,7 +928,12 @@ func runFields(c *context, args []string) error {
 	}
 	form := filling.Form()
 	if form.HasXFA() {
-		fmt.Fprintln(c.out, "note: the file also carries an XFA form, which is not read; the standard one is.")
+		if form.Dynamic() {
+			fmt.Fprintln(c.out, "note: this file's pages are a placeholder and its real form is XFA;")
+			fmt.Fprintln(c.out, "      \"pdfops xfa\" draws that one. What follows is the standard form beside it.")
+		} else {
+			fmt.Fprintln(c.out, "note: the file also carries an XFA form, which is not read; the standard one is.")
+		}
 	}
 	for _, f := range form.Fields() {
 		marks := ""
@@ -1003,5 +1009,41 @@ func (s *stringList) String() string { return strings.Join(*s, ",") }
 
 func (s *stringList) Set(v string) error {
 	*s = append(*s, v)
+	return nil
+}
+
+// runXFA lays out the form inside a document whose pages are a placeholder,
+// and writes those pages drawn.
+//
+// It says on the way out what it drew and what it could not, because the
+// answer "this file is now readable" is only worth having with the size of
+// what is missing beside it.
+func runXFA(c *context, args []string) error {
+	fs := flags("xfa")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	src, err := c.read(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	d, rep, err := ops.FromXFA(src)
+	if err != nil {
+		return err
+	}
+	if err := save(d, fs.Arg(1)); err != nil {
+		return err
+	}
+	fmt.Fprintf(c.out, "%d sheets, %d elements drawn", rep.Sheets, rep.Drawn)
+	if rep.Hidden > 0 {
+		fmt.Fprintf(c.out, ", %d the form hides", rep.Hidden)
+	}
+	fmt.Fprintln(c.out)
+	for _, u := range rep.Unplaced {
+		fmt.Fprintf(c.out, "  not drawn: %s\n", u)
+	}
 	return nil
 }

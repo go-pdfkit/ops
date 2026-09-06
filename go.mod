@@ -6,6 +6,7 @@ require (
 	github.com/go-pdfkit/extract v0.3.0
 	github.com/go-pdfkit/forms v0.3.0
 	github.com/go-pdfkit/reader v0.6.0
+	github.com/go-pdfkit/xfa v0.21.0
 )
 
 require (

@@ -209,3 +209,45 @@ takes the pages apart and builds a new document round them, and a form is tied
 into a document by object number in a dozen places at once — so merging,
 splitting or rotating a form's pages loses the form. Use `fill` on the file
 itself.
+
+## The form inside a blank document
+
+Some PDFs are blank to look at and are not blank. Their pages hold one panel —
+"Please wait... your PDF viewer may not be able to display this type of
+document" — and the real form exists only as XML beside them, laid out when
+Adobe's own reader opens it. Adobe removed the format from PDF 2.0; no browser
+and no other reader lays one out.
+
+`pdfops xfa` lays it out and draws it, which turns such a file into one
+anything can show.
+
+```
+$ pdfops xfa t1135-fill-23e.pdf readable.pdf
+6 sheets, 497 elements drawn
+```
+
+Measured over every dynamic form in a corpus of 2 240 real government forms —
+fourteen of them, from the Canada Revenue Agency, the French cerfa series, the
+US Department of Labor and the Office of Personnel Management: **all fourteen
+laid out, 111 sheets, 9 808 elements, nothing left unplaced**, and every file
+read back by poppler.
+
+WHERE each element goes is [go-pdfkit/xfa](https://github.com/go-pdfkit/xfa)'s,
+measured against pdf.js and pdfium. What is drawn INSIDE each box is this
+package's own and much simpler: the four standard faces, a greedy line break,
+a rule round each field. So this is **legibility rather than fidelity** — the
+difference between a blank sheet and a form somebody can read, not between this
+and Adobe.
+
+Two limits, both named rather than left to be discovered:
+
+- **Pictures are not drawn.** For thirteen of the fourteen that costs a logo.
+  The fourteenth, French cerfa 12064, carries 212 fields, 7 draws, 4 images and
+  — counted, not guessed — no `<text>` and no `<caption>` whatever: its printed
+  form *is* one of those pictures. What comes out is a correct grid of 212
+  empty boxes on a blank sheet.
+- **Text is set smaller rather than cut off.** The box was measured with the
+  font the template names and this draws in Helvetica, which is wider; at the
+  template's own size the words come to more lines than the box holds. The size
+  comes down until they fit, with a floor of four points, because losing the
+  end of a sentence is worse than setting it a point smaller.
