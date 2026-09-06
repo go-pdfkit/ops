@@ -416,16 +416,16 @@ func TestEveryLineOfAWrapFitsTheWidthItWasGiven(t *testing.T) {
 }
 
 func TestReadingTheWordsOutOfAValue(t *testing.T) {
-	if got := xfaValueText(nil); got != "" {
+	if got := xfaValueText(nil, nil); got != "" {
 		t.Errorf("nothing came to %q", got)
 	}
 	if got := xfaFontSize(nil); got != 10 {
 		t.Errorf("no node came to %v points", got)
 	}
-	if got := xfaCaption(nil); got != "" {
+	if got := xfaCaption(nil, nil); got != "" {
 		t.Errorf("no node captioned %q", got)
 	}
-	if got := xfaContent(nil); got != "" {
+	if got := xfaContent(nil, nil); got != "" {
 		t.Errorf("no node drew %q", got)
 	}
 	if boldIf(true) != HelveticaBold || boldIf(false) != Helvetica {
@@ -602,5 +602,107 @@ func TestAskingAnElementThatIsNotThereForAPicture(t *testing.T) {
 	}
 	if pic, why := xfaPicture(xfa.Box{Node: &xfa.FormNode{}}, 0); pic != nil || why != "" {
 		t.Errorf("a node with no template gave %v, %q", pic, why)
+	}
+}
+
+// numberedTemplate is a form whose footer asks the layout which sheet it is
+// on, the way every one in the corpus that numbers its pages does: rich text
+// holding a floating field that names a hidden field by its id, whose script
+// is one line asking xfa.layout.
+//
+// The content area holds one draw, so the two in the body make two sheets.
+func numberedTemplate(script1, script2, embed1, embed2 string) string {
+	return `<template><subform name="form1" layout="tb">
+	  <pageSet><pageArea name="Page1"><medium long="792pt" short="612pt"/>
+	    <contentArea x="0pt" y="0pt" w="500pt" h="25pt"/>
+	    <draw name="Footer" x="0pt" y="700pt" w="200pt" h="20pt"><value>
+	      <exData contentType="text/html"><body xmlns="http://www.w3.org/1999/xhtml"
+	        xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"
+	        ><p>Page<span xfa:embed="` + embed1 + `"/> of<span xfa:embed="` + embed2 + `"/></p></body>
+	      </exData></value></draw>
+	  </pageArea></pageSet>
+	  <subform name="Body" layout="tb">
+	    <field name="Where" id="ff1" presence="hidden" w="1pt" h="1pt">
+	      <calculate><script>` + script1 + `</script></calculate></field>
+	    <field name="HowMany" id="ff2" presence="hidden" w="1pt" h="1pt">
+	      <calculate><script>` + script2 + `</script></calculate></field>
+	    <draw name="A" w="100pt" h="20pt"><value><text>first</text></value></draw>
+	    <draw name="B" w="100pt" h="20pt"><value><text>second</text></value></draw>
+	  </subform></subform></template>`
+}
+
+const askPage, askCount = "this.rawValue = xfa.layout.page(this);", "this.rawValue = xfa.layout.pageCount();"
+
+func TestAFooterIsToldWhichSheetItIsOn(t *testing.T) {
+	d, rep := openXFA(t, xfaFile(t, "template",
+		numberedTemplate(askPage, askCount, "#ff1", "#ff2")))
+	if rep.Sheets != 2 {
+		t.Fatalf("%d sheets", rep.Sheets)
+	}
+	for i, want := range []string{"Page 1 of 2", "Page 2 of 2"} {
+		got := strings.Join(strings.Fields(marksText(d.pages[i])), " ")
+		if !strings.Contains(got, want) {
+			t.Errorf("sheet %d says %q, wanted it to hold %q", i+1, got, want)
+		}
+	}
+}
+
+func TestAFloatingFieldThisDoesNotUnderstandIsLeftAsAGap(t *testing.T) {
+	// A wrong number that looks right is worse than a gap. The four cerfa
+	// fields carry a static default beside their script, and printing THAT
+	// would put "Page 1 of 1" on every sheet of a four-sheet form.
+	for _, c := range []struct {
+		name           string
+		s1, s2, e1, e2 string
+	}{
+		{"a script asking something else", "this.rawValue = 42;", askCount, "#ff1", "#ff2"},
+		{"an id nothing carries", askPage, askCount, "#nosuchthing", "#ff2"},
+		{"no script at all", "", "", "#ff1", "#ff2"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d, _ := openXFA(t, xfaFile(t, "template",
+				numberedTemplate(c.s1, c.s2, c.e1, c.e2)))
+			got := strings.Join(strings.Fields(marksText(d.pages[0])), " ")
+			if strings.Contains(got, "Page 1 of 2") {
+				t.Errorf("it answered a question it does not understand: %q", got)
+			}
+			if !strings.Contains(got, "Page") {
+				t.Errorf("the footer lost its own words too: %q", got)
+			}
+		})
+	}
+}
+
+func TestTheCountIsRecognisedBeforeThePage(t *testing.T) {
+	// "xfa.layout.page" is a prefix of "xfa.layout.pageCount", so the looser
+	// test taken first would answer both with the sheet number and a
+	// nine-sheet form would say "Page 3 of 3".
+	if got := questionAsked(scriptNode(t, askCount)); got != asksCount {
+		t.Errorf("pageCount was read as %q", got)
+	}
+	if got := questionAsked(scriptNode(t, askPage)); got != asksPage {
+		t.Errorf("page was read as %q", got)
+	}
+	if got := questionAsked(scriptNode(t, "this.rawValue = 1;")); got != "" {
+		t.Errorf("an ordinary script was read as %q", got)
+	}
+}
+
+// scriptNode is a field carrying one script, for asking what it asks.
+func scriptNode(t *testing.T, src string) *xfa.Node {
+	t.Helper()
+	n, err := xfa.ParseTemplate(strings.NewReader(
+		`<template><subform><field><calculate><script>` + src +
+			`</script></calculate></field></subform></template>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestAskingNothingForAnAnswer(t *testing.T) {
+	var none *sheetNumbers
+	if got := none.answer("#whatever"); got != "" {
+		t.Errorf("nothing answered %q", got)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/go-pdfkit/forms"
@@ -64,6 +65,12 @@ import (
 // Scripts are not run, which is [github.com/go-pdfkit/xfa]'s decision and its
 // reasoning: of 5 744 scripts across the corpus's dynamic forms, 5 131 are
 // handlers for typing and clicking, and only 188 run at load.
+//
+// Two expressions are ANSWERED rather than run, and the difference is the
+// point: "xfa.layout.page(this)" and "xfa.layout.pageCount()" are questions
+// asked of the layout, which has just finished answering them. See
+// [sheetNumbers] — every one of the corpus's sixteen page-number fields asks
+// one of those two and nothing else.
 
 // An XFAReport says what laying a form out came to. A caller showing somebody
 // the result needs to be able to say what is missing from it.
@@ -130,7 +137,9 @@ func FromXFA(src *reader.Document) (*Doc, *XFAReport, error) {
 	layout := xfa.Place(xfa.Expand(template, data))
 	d := New()
 	rep := &XFAReport{Sheets: len(layout.Pages)}
-	for _, page := range layout.Pages {
+	num := readSheetNumbers(template, len(layout.Pages))
+	for sheet, page := range layout.Pages {
+		num.sheet = sheet + 1
 		w, h := page.Width.Points(), page.Height.Points()
 		if w <= 0 || h <= 0 {
 			// A page area writing no medium gives no sheet size, and pdf.js
@@ -152,7 +161,7 @@ func FromXFA(src *reader.Document) (*Doc, *XFAReport, error) {
 				p.pictures = append(p.pictures, *pic)
 				rep.Pictures++
 			}
-			p.marks = append(p.marks, xfaMarks(b, h)...)
+			p.marks = append(p.marks, xfaMarks(b, h, num)...)
 			rep.Drawn++
 		}
 	}
@@ -196,7 +205,7 @@ func partNames(ps []forms.Packet) string {
 // down from the top left of the sheet and a PDF draws up from the bottom left,
 // so every y is subtracted rather than translated — and a box's y is its TOP,
 // which is what makes the subtraction the box's height short of its baseline.
-func xfaMarks(b xfa.Box, pageHeight float64) []stampInstance {
+func xfaMarks(b xfa.Box, pageHeight float64, num *sheetNumbers) []stampInstance {
 	x, y := b.Rect.X.Points(), b.Rect.Y.Points()
 	w, h := b.Rect.W.Points(), b.Rect.H.Points()
 	var out []stampInstance
@@ -212,9 +221,9 @@ func xfaMarks(b xfa.Box, pageHeight float64) []stampInstance {
 	// A caption is what the form calls the field, and it is set apart from
 	// what somebody wrote in it: the two would otherwise read as one string.
 	// A draw has neither — its text is its content.
-	caption, value := xfaCaption(b.Node), b.Value
+	caption, value := xfaCaption(b.Node, num), b.Value
 	if b.Kind == "draw" {
-		caption, value = xfaContent(b.Node), ""
+		caption, value = xfaContent(b.Node, num), ""
 	}
 	runs := []struct {
 		s string
@@ -319,7 +328,7 @@ func xfaFontSize(n *xfa.FormNode) float64 {
 }
 
 // xfaCaption is what a field's <caption> says.
-func xfaCaption(n *xfa.FormNode) string {
+func xfaCaption(n *xfa.FormNode, num *sheetNumbers) string {
 	if n == nil || n.Template == nil {
 		return ""
 	}
@@ -327,15 +336,15 @@ func xfaCaption(n *xfa.FormNode) string {
 	if c == nil {
 		return ""
 	}
-	return xfaValueText(c.Child("value"))
+	return xfaValueText(c.Child("value"), num)
 }
 
 // xfaContent is the text a draw prints.
-func xfaContent(n *xfa.FormNode) string {
+func xfaContent(n *xfa.FormNode, num *sheetNumbers) string {
 	if n == nil || n.Template == nil {
 		return ""
 	}
-	return xfaValueText(n.Template.Child("value"))
+	return xfaValueText(n.Template.Child("value"), num)
 }
 
 // xfaValueKinds is what a <value> may hold that is worth reading as words, and
@@ -361,7 +370,7 @@ var xfaValueKinds = map[string]bool{
 // characters, in the order they are written. A rich text's characters sit in
 // its elements rather than directly under it, which is why this descends into
 // a kind once it has decided to read it.
-func xfaValueText(v *xfa.Node) string {
+func xfaValueText(v *xfa.Node, num *sheetNumbers) string {
 	if v == nil {
 		return ""
 	}
@@ -371,13 +380,19 @@ func xfaValueText(v *xfa.Node) string {
 			continue
 		}
 		kid.Walk(func(n *xfa.Node) {
-			if n.Text == "" {
+			// A floating field carries no text of its own: what it stands for
+			// is the value of the element it names. See [sheetNumbers].
+			word := n.Text
+			if e := n.Get("embed"); e != "" {
+				word = num.answer(e)
+			}
+			if word == "" {
 				return
 			}
 			if b.Len() > 0 {
 				b.WriteByte(' ')
 			}
-			b.WriteString(n.Text)
+			b.WriteString(word)
 		})
 	}
 	return strings.TrimSpace(b.String())
@@ -537,4 +552,117 @@ func xfaFitPicture(aspect string, boxW, boxH, natW, natH float64) (w, h float64)
 		}
 		return natW * f, natH * f
 	}
+}
+
+// A sheetNumbers answers the two questions a form's furniture asks about the
+// sheet it is printed on.
+//
+// # Why this exists, and why it is not running the form's scripts
+//
+// A footer reading "Page 3 of 9" is not written as text. It is rich text
+// holding a FLOATING FIELD — <span xfa:embed="#floatingField018592"/> — which
+// names another element by its id, and that element's value is set by a
+// script. Sixteen of these appear across the corpus's dynamic forms and every
+// single one is a page number: CurrentPage and PageCount on the Canada Revenue
+// Agency's, Page_active and Nombre_de_pages on a French cerfa's.
+//
+// Their scripts, all sixteen, are one of two lines:
+//
+//	this.rawValue = xfa.layout.page(this);
+//	this.rawValue = xfa.layout.pageCount();
+//
+// Those are not arbitrary code. They are questions asked OF THE LAYOUT, and
+// this package has just finished answering them: which sheet a box was placed
+// on, and how many sheets there are. Recognising the two expressions and
+// handing back what the pager already computed is not running the form's
+// scripts — nothing is evaluated, nothing the script could reach is read — it
+// is declining to ask a question twice.
+//
+// # This is ours, and neither reference does it
+//
+// pdf.js's layout does not resolve xfa:embed at all, so its footers read
+// "Page  of". pdfium runs a JavaScript engine and gets the number the long
+// way. Neither offers a declarative answer to copy, so this one is named as
+// this package's own rather than attributed to either.
+//
+// The four cerfa fields carry a static default beside their script. Printing
+// THAT would put "Page 1 of 1" on every sheet of a four-sheet form, which is
+// worse than leaving the gap: a wrong number that looks right is the failure
+// this is guarding against, so only the two recognised questions are answered
+// and everything else is left as it was.
+type sheetNumbers struct {
+	// asks maps a floating field's id to which of the two questions the
+	// element it names asks.
+	asks map[string]string
+	// sheet is the one being drawn, counting from one, and total is how many
+	// there are.
+	sheet, total int
+}
+
+// The two questions, and the answers they are given.
+const (
+	asksPage  = "page"
+	asksCount = "count"
+)
+
+// readSheetNumbers indexes a template's floating fields once, before any sheet
+// is drawn.
+func readSheetNumbers(template *xfa.Node, total int) *sheetNumbers {
+	s := &sheetNumbers{asks: map[string]string{}, total: total}
+	byID := map[string]*xfa.Node{}
+	template.Walk(func(n *xfa.Node) {
+		if id := n.Get("id"); id != "" {
+			byID[id] = n
+		}
+	})
+	template.Walk(func(n *xfa.Node) {
+		ref := strings.TrimPrefix(n.Get("embed"), "#")
+		if ref == "" {
+			return
+		}
+		target, ok := byID[ref]
+		if !ok {
+			return
+		}
+		if q := questionAsked(target); q != "" {
+			s.asks[n.Get("embed")] = q
+		}
+	})
+	return s
+}
+
+// questionAsked says which of the two questions an element's scripts ask, or
+// nothing at all.
+//
+// pageCount is tested first because "xfa.layout.page" is a prefix of
+// "xfa.layout.pageCount" and the looser test would swallow both.
+func questionAsked(n *xfa.Node) string {
+	found := ""
+	n.Walk(func(x *xfa.Node) {
+		if x.Kind != "script" || found != "" {
+			return
+		}
+		switch src := strings.Join(strings.Fields(x.Text), " "); {
+		case strings.Contains(src, "xfa.layout.pageCount()"):
+			found = asksCount
+		case strings.Contains(src, "xfa.layout.page("):
+			found = asksPage
+		}
+	})
+	return found
+}
+
+// answer is what a floating field is replaced by, or the empty string for one
+// this does not understand.
+func (s *sheetNumbers) answer(embed string) string {
+	if s == nil {
+		return ""
+	}
+	switch s.asks[embed] {
+	case asksPage:
+		return strconv.Itoa(s.sheet)
+	case asksCount:
+		return strconv.Itoa(s.total)
+	}
+	return ""
 }

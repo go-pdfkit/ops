@@ -257,6 +257,25 @@ per pixel, the assumption for a picture that declares nothing — the same logo
 is 2617 points wide and covers a third of the sheet in black. It did, until the
 render was looked at.
 
+**Page numbers come out right** — "Page 3 of 11", and "Page 3 sur 4" on a
+French form — without running the form's scripts. A footer like that is not
+text: it is rich text holding a *floating field* naming a hidden field whose
+value a script sets. All sixteen of those in the corpus ask one of exactly two
+things:
+
+```
+this.rawValue = xfa.layout.page(this);
+this.rawValue = xfa.layout.pageCount();
+```
+
+Those are questions asked **of the layout**, which has just answered them.
+Recognising the two and handing back what the pager computed is not evaluating
+anything. Neither reference does this — pdf.js's layout ignores `xfa:embed`
+entirely, pdfium runs a JavaScript engine — so it is named as ours. Anything
+else a floating field names is left as a gap, because a wrong number that looks
+right is worse than a blank: four cerfa fields carry a static default beside
+their script, and printing that would put "Page 1 of 1" on every sheet.
+
 Two limits, both named rather than left to be discovered:
 
 - **A picture in a file outside the document is not fetched.** That is pdf.js's
