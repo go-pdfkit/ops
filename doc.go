@@ -63,6 +63,10 @@ type Page struct {
 	// picture is set when the page is one image made into a page.
 	picture *picture
 
+	// pictures are images drawn at a place on the page rather than over the
+	// whole of it. They go under the marks, being what a form is printed on.
+	pictures []placedPicture
+
 	// marks is the text drawn on top of whatever the page already shows.
 	marks []stampInstance
 }

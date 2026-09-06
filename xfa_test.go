@@ -1,12 +1,14 @@
 package ops
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
+	"github.com/go-gfx/gfx/codec"
 	"github.com/go-pdfkit/forms"
-
 	"github.com/go-pdfkit/reader"
+	"github.com/go-pdfkit/xfa"
 )
 
 // xfaFile writes a document whose form carries an XFA package of named parts,
@@ -471,5 +473,134 @@ func TestARichTextsWordsAreReadInTheOrderItsMarkupWritesThem(t *testing.T) {
 	}
 	if strings.Contains(got, "linesecond") {
 		t.Errorf("two paragraphs were run together: %q", got)
+	}
+}
+
+// imageTemplate is a one-sheet form whose only element is a draw carrying a
+// picture, with whatever attributes the case under test wants on it.
+func imageTemplate(attrs, payload string) string {
+	return `<template><subform name="form1" layout="tb">
+	  <pageSet><pageArea name="Page1"><medium long="792pt" short="612pt"/>
+	    <contentArea x="0pt" y="0pt" w="500pt" h="500pt"/></pageArea></pageSet>
+	  <subform name="Body"><draw name="Logo" w="200pt" h="100pt">
+	    <value><image ` + attrs + `>` + payload + `</image></value>
+	  </draw></subform></subform></template>`
+}
+
+func TestAPictureInAFormIsDrawn(t *testing.T) {
+	payload := base64.StdEncoding.EncodeToString(picBytes(t, codec.JPEG, 255))
+	d, rep := openXFA(t, xfaFile(t, "template", imageTemplate(`contentType="image/jpeg"`, payload)))
+	if rep.Pictures != 1 {
+		t.Fatalf("%d pictures drawn, and %v", rep.Pictures, rep.Unplaced)
+	}
+	if len(d.pages[0].pictures) != 1 {
+		t.Fatalf("%d pictures on the page", len(d.pages[0].pictures))
+	}
+	// The picture is 32 by 16 in a box 200 by 100. "fit" is the default, so
+	// it is scaled by the smaller ratio — 200/32 = 6.25 against 100/16 = 6.25,
+	// which are equal here — and anchored at the top left of the box.
+	got := d.pages[0].pictures[0].rect
+	if got[2] != 200 || got[3] != 100 {
+		t.Errorf("it was drawn %v by %v", got[2], got[3])
+	}
+	// The sheet is 792 tall and the box begins at the top of the content area,
+	// so the picture's bottom is 792 - 0 - 100.
+	if got[1] != 692 {
+		t.Errorf("its bottom is at %v", got[1])
+	}
+}
+
+func TestAPictureSurvivesBeingWrittenOut(t *testing.T) {
+	payload := base64.StdEncoding.EncodeToString(picBytes(t, codec.JPEG, 255))
+	d, _ := openXFA(t, xfaFile(t, "template", imageTemplate(`contentType="image/jpeg"`, payload)))
+	out, err := d.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, st, _ := pageImage(t, out)
+	if got := st.Dict.Get("Filter"); got != reader.Name("DCTDecode") {
+		t.Errorf("the picture went in as %v", got)
+	}
+}
+
+func TestWhatStopsAPictureBeingDrawn(t *testing.T) {
+	good := base64.StdEncoding.EncodeToString(picBytes(t, codec.JPEG, 255))
+	for _, c := range []struct {
+		name  string
+		attrs string
+		body  string
+		want  string
+	}{
+		// pdf.js: "we don't get remote data and use what we have in the pdf
+		// itself, so no picture for non null href" (template.js:3414-3419).
+		{"a file outside the document", `href="C:\logo.png"`, "", "outside the document"},
+		{"an encoding that is not base64", `transferEncoding="package"`, good, "rather than base64"},
+		{"a format the reference does not list", `contentType="image/svg+xml"`, good, "says it is image/svg+xml"},
+		{"base64 that is not", `contentType="image/jpeg"`, "not base64 at all!!", "not the base64 it says it is"},
+		{"bytes that are not a picture", `contentType="image/jpeg"`, "aGVsbG8gd29ybGQ=", "cannot be read"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, rep := openXFA(t, xfaFile(t, "template", imageTemplate(c.attrs, c.body)))
+			if rep.Pictures != 0 {
+				t.Fatalf("%d pictures were drawn", rep.Pictures)
+			}
+			if len(rep.Unplaced) != 1 || !strings.Contains(rep.Unplaced[0], c.want) {
+				t.Errorf("the report says %v, wanted it to mention %q", rep.Unplaced, c.want)
+			}
+		})
+	}
+}
+
+func TestHowBigAPictureIsDrawnInTheBoxMeasuredForIt(t *testing.T) {
+	// The arithmetic is pdfium's (xfa/fxfa/cxfa_ffwidget.cpp:55-86). The box
+	// is 100 by 50 and the picture 40 by 40, so the ratios are 2.5 across and
+	// 1.25 down.
+	for _, c := range []struct {
+		aspect string
+		w, h   float64
+	}{
+		{"", 50, 50},         // fit: the smaller ratio, 1.25, both ways
+		{"fit", 50, 50},      //
+		{"furlongs", 50, 50}, // anything the template writes that is not one of the five
+		{"none", 100, 50},    // exactly the box, proportions be damned
+		{"actual", 40, 40},   // its own size
+		{"height", 50, 50},   // as tall as the box, scaled across by 1.25
+		{"width", 100, 100},  // as wide as the box, scaled down by 2.5
+	} {
+		t.Run("aspect "+c.aspect, func(t *testing.T) {
+			w, h := xfaFitPicture(c.aspect, 100, 50, 40, 40)
+			if w != c.w || h != c.h {
+				t.Errorf("came to %v by %v, wanted %v by %v", w, h, c.w, c.h)
+			}
+		})
+	}
+}
+
+func TestAPictureWithNothingToFitAgainst(t *testing.T) {
+	// A box with no width or no height is nothing to fit against, and a
+	// picture of no size is nothing to fit.
+	if w, h := xfaFitPicture("fit", 0, 50, 40, 40); w != 40 || h != 40 {
+		t.Errorf("a box with no width gave %v by %v", w, h)
+	}
+	if w, h := xfaFitPicture("fit", 100, 50, 0, 40); w != 100 || h != 50 {
+		t.Errorf("a picture with no width gave %v by %v", w, h)
+	}
+}
+
+func TestFitIsBoundedByWhicheverSideRunsOutFirst(t *testing.T) {
+	// The table above has the height running out first. A box that is tall and
+	// narrow is bounded by its width instead, and taking the wrong one of the
+	// two is how a picture comes out drawn past the edge of its box.
+	if w, h := xfaFitPicture("fit", 50, 100, 40, 40); w != 50 || h != 50 {
+		t.Errorf("a tall narrow box gave %v by %v, wanted 50 by 50", w, h)
+	}
+}
+
+func TestAskingAnElementThatIsNotThereForAPicture(t *testing.T) {
+	if pic, why := xfaPicture(xfa.Box{}, 0); pic != nil || why != "" {
+		t.Errorf("an empty box gave %v, %q", pic, why)
+	}
+	if pic, why := xfaPicture(xfa.Box{Node: &xfa.FormNode{}}, 0); pic != nil || why != "" {
+		t.Errorf("a node with no template gave %v, %q", pic, why)
 	}
 }

@@ -7,6 +7,8 @@ package ops
 
 import (
 	"bytes"
+	"image"
+	"image/jpeg"
 	"strings"
 	"testing"
 
@@ -259,5 +261,101 @@ func TestWhatIsNotAPicture(t *testing.T) {
 				t.Errorf("%d pages came of it", d.PageCount())
 			}
 		})
+	}
+}
+
+// greyJPEG writes a JPEG with ONE colour component, which is what a scanner
+// produces and what the standard library writes for an image.Gray.
+func greyJPEG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewGray(image.Rect(0, 0, w, h))
+	for i := range img.Pix {
+		img.Pix[i] = byte(i)
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestAGreyJPEGIsDeclaredGreyAndNotRGB(t *testing.T) {
+	// The bytes go in undecoded, so the colour space written beside them has
+	// to be the one they are in. Declared DeviceRGB, a greyscale JPEG is read
+	// three samples at a time out of a stream that holds one and comes out a
+	// third of its height — which is what a French cerfa's scanned background
+	// did at 4961 by 3508 and one component.
+	d := New()
+	if err := d.Picture(greyJPEG(t, 32, 16), 0); err != nil {
+		t.Fatal(err)
+	}
+	out, err := d.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, st, _ := pageImage(t, out)
+	if got := st.Dict.Get("ColorSpace"); got != reader.Name("DeviceGray") {
+		t.Errorf("the colour space is %v, wanted DeviceGray", got)
+	}
+	if got := st.Dict.Get("Filter"); got != reader.Name("DCTDecode") {
+		t.Errorf("it was re-encoded as %v rather than carried as it stands", got)
+	}
+}
+
+func TestAColourJPEGIsStillCarriedAsItStands(t *testing.T) {
+	d := New()
+	if err := d.Picture(picBytes(t, codec.JPEG, 255), 0); err != nil {
+		t.Fatal(err)
+	}
+	out, err := d.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, st, _ := pageImage(t, out)
+	if got := st.Dict.Get("ColorSpace"); got != reader.Name("DeviceRGB") {
+		t.Errorf("the colour space is %v", got)
+	}
+	if got := st.Dict.Get("Filter"); got != reader.Name("DCTDecode") {
+		t.Errorf("the filter is %v", got)
+	}
+}
+
+func TestCountingWhatAJPEGSaysItHolds(t *testing.T) {
+	grey, colour := greyJPEG(t, 8, 8), picBytes(t, codec.JPEG, 255)
+	for _, c := range []struct {
+		name string
+		in   []byte
+		want int
+		ok   bool
+	}{
+		{"one component", grey, 1, true},
+		{"three", colour, 3, true},
+		{"not a JPEG at all", picBytes(t, codec.PNG, 255), 0, false},
+		{"too short to be one", []byte{0xFF, 0xD8}, 0, false},
+		{"a marker that is not there", []byte{0xFF, 0xD8, 0x00, 0x01, 0x02, 0x03}, 0, false},
+		{"a segment longer than the file", []byte{0xFF, 0xD8, 0xFF, 0xE0, 0xFF, 0xFF}, 0, false},
+		{"a segment shorter than its own length", []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x01}, 0, false},
+		{"a frame header cut short", append([]byte{0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x04}, 0, 0), 0, false},
+		{"the scan before any frame", []byte{0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02}, 0, false},
+		{"segments that run out before a frame", []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02}, 0, false},
+		{"nothing but the start", []byte{0xFF, 0xD8}, 0, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := jpegComponents(c.in)
+			if ok != c.ok || (ok && got != c.want) {
+				t.Errorf("said %d, %v; wanted %d, %v", got, ok, c.want, c.ok)
+			}
+		})
+	}
+}
+
+func TestAFillByteAndAMarkerWithNoSegmentAreSteppedOver(t *testing.T) {
+	// FF is also the padding between segments, and the restart markers carry
+	// no length of their own. A reader that treats either as a segment reads a
+	// length out of the next marker and loses the frame.
+	grey := greyJPEG(t, 8, 8)
+	padded := append([]byte{0xFF, 0xD8, 0xFF, 0xFF, 0xFF, 0xD0}, grey[2:]...)
+	if got, ok := jpegComponents(padded); !ok || got != 1 {
+		t.Errorf("said %d, %v", got, ok)
 	}
 }

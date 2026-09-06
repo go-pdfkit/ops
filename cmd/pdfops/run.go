@@ -1038,6 +1038,9 @@ func runXFA(c *context, args []string) error {
 		return err
 	}
 	fmt.Fprintf(c.out, "%d sheets, %d elements drawn", rep.Sheets, rep.Drawn)
+	if rep.Pictures > 0 {
+		fmt.Fprintf(c.out, ", %d of them pictures", rep.Pictures)
+	}
 	if rep.Hidden > 0 {
 		fmt.Fprintf(c.out, ", %d the form hides", rep.Hidden)
 	}

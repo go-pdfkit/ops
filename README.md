@@ -239,13 +239,32 @@ a rule round each field. So this is **legibility rather than fidelity** — the
 difference between a blank sheet and a form somebody can read, not between this
 and Adobe.
 
+**Pictures are drawn** — 27 of them across twelve of the fourteen. For most
+that is a logo; for French cerfa 12064 it is the whole printed form. That one
+carries 212 fields, 7 draws, 4 images and — counted, not guessed — no `<text>`
+and no `<caption>` whatever, so without its pictures it is a grid of empty
+boxes and with them it is the customs declaration it is. How big each one is
+drawn follows pdfium's own arithmetic (`xfa/fxfa/cxfa_ffwidget.cpp:55-86`),
+because pdf.js declines to settle `fit` and `actual` and leaves them to a
+browser's sizing of an `<img>`.
+
+**A picture's own size is its pixels at its own resolution**, read from a PNG's
+`pHYs` chunk or a JPEG's JFIF density, and that is not a detail. Every Canada
+Revenue Agency form in the corpus writes `aspect="actual"`, and their logos are
+1200-dpi PNGs: 2617 pixels across is 157.02 points, which is to a hundredth of
+a point the width the template writes for the box. Taken at 72 dpi — one point
+per pixel, the assumption for a picture that declares nothing — the same logo
+is 2617 points wide and covers a third of the sheet in black. It did, until the
+render was looked at.
+
 Two limits, both named rather than left to be discovered:
 
-- **Pictures are not drawn.** For thirteen of the fourteen that costs a logo.
-  The fourteenth, French cerfa 12064, carries 212 fields, 7 draws, 4 images and
-  — counted, not guessed — no `<text>` and no `<caption>` whatever: its printed
-  form *is* one of those pictures. What comes out is a correct grid of 212
-  empty boxes on a blank sheet.
+- **A picture in a file outside the document is not fetched.** That is pdf.js's
+  position and its words: *"we don't get remote data and use what we have in the
+  pdf itself, so no picture for non null href"*. Two of cerfa 12818's are like
+  that, and both name an absolute path on the machine of whoever drew the form
+  — `C:\Users\…\Downloads\logo ministere.PNG`. They are reported, not passed
+  over.
 - **Text is set smaller rather than cut off.** The box was measured with the
   font the template names and this draws in Helvetica, which is wider; at the
   template's own size the words come to more lines than the box holds. The size

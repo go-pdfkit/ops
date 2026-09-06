@@ -7,6 +7,7 @@ package ops
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -43,23 +44,22 @@ import (
 // overruns its box — the box is what the layout measured, and the text is
 // clipped to it rather than drawn over its neighbour.
 //
-// # Pictures are not drawn, and one form in fourteen is mostly picture
+// # Pictures
 //
-// A template's <image> holds a picture, base64, inside the XML. None is drawn
-// here, and for thirteen of the corpus's fourteen dynamic forms that costs a
-// logo.
+// A template's <image> holds the picture itself, base64, inside the XML, and
+// it is drawn: 27 of them across twelve of the corpus's fourteen dynamic
+// forms. For most that is a logo. For French cerfa 12064 it is the whole
+// printed form — 212 fields, 7 draws, 4 images and, counted rather than
+// guessed, NO <text> and NO <caption> at all — so without the pictures that
+// sheet comes out as a grid of empty boxes, and with them it comes out as the
+// customs declaration it is.
 //
-// The fourteenth is worth knowing about before it surprises somebody. French
-// cerfa 12064 carries 212 fields, 7 draws, 4 images and — measured, not
-// guessed — NO <text> and NO <caption> at all: the printed form is one of
-// those pictures, and the fields are boxes laid over it. What comes out is
-// therefore a correct grid of 212 empty boxes on a blank sheet. The layout is
-// right and the sheet is nearly wordless, because the template has nearly no
-// words in it.
-//
-// So the honest limit of this verb is pictures rather than text. A form that
-// prints its labels as characters comes out readable; one that prints them as
-// a picture comes out as the boxes alone.
+// An <image> naming a file OUTSIDE the document is not fetched, which is
+// pdf.js's position and its words: "we don't get remote data and use what we
+// have in the pdf itself, so no picture for non null href"
+// (template.js:3414-3419). Two of cerfa 12818's are like that, and both name
+// an absolute path on the machine of the person who drew the form. They are
+// reported in [XFAReport.Unplaced] rather than passed over.
 //
 // Scripts are not run, which is [github.com/go-pdfkit/xfa]'s decision and its
 // reasoning: of 5 744 scripts across the corpus's dynamic forms, 5 131 are
@@ -75,8 +75,11 @@ type XFAReport struct {
 	// Hidden is how many the template asks not to be shown. They are placed —
 	// they take up room, and what follows them sits below — and not drawn.
 	Hidden int
-	// Unplaced is everything the layout could not place, one line each, with
-	// the reason the engine gave. Empty is the ordinary case.
+	// Pictures is how many of the drawn elements carried one.
+	Pictures int
+	// Unplaced is everything the layout could not place, and every picture
+	// that could not be drawn, one line each with the reason. Empty is the
+	// ordinary case.
 	Unplaced []string
 }
 
@@ -141,6 +144,13 @@ func FromXFA(src *reader.Document) (*Doc, *XFAReport, error) {
 			if b.Hidden {
 				rep.Hidden++
 				continue
+			}
+			if pic, why := xfaPicture(b, h); why != "" {
+				rep.Unplaced = append(rep.Unplaced,
+					fmt.Sprintf("%s (%s): %s", b.Path, b.Kind, why))
+			} else if pic != nil {
+				p.pictures = append(p.pictures, *pic)
+				rep.Pictures++
 			}
 			p.marks = append(p.marks, xfaMarks(b, h)...)
 			rep.Drawn++
@@ -405,4 +415,126 @@ func wrapToWidth(f Font, s string, size, width float64) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// xfaImageMIMEs is what a template may say its picture is, and it is pdf.js's
+// set (template.js:131-144). A contentType outside it is not drawn, which is
+// the reference's own answer rather than a guess: a template naming a format
+// nothing reads is a template saying so.
+var xfaImageMIMEs = map[string]bool{
+	"image/gif": true, "image/jpeg": true, "image/jpg": true,
+	"image/pjpeg": true, "image/png": true, "image/apng": true,
+	"image/x-png": true, "image/bmp": true, "image/x-ms-bmp": true,
+	"image/tiff": true, "image/tif": true,
+	"application/octet-stream": true,
+}
+
+// xfaPicture is the picture a placed element draws, where it draws one.
+//
+// It returns nothing at all for an element with no image, and a reason for one
+// whose image cannot be drawn — so that a form losing its printed background
+// says so rather than coming out mysteriously bare.
+//
+// # What the references do, and what is followed
+//
+// An <image> with a non-empty href names a file OUTSIDE the document, and
+// pdf.js declines to fetch it: "In general, we don't get remote data and use
+// what we have in the pdf itself, so no picture for non null href"
+// (template.js:3414-3419). The same holds here, and for the same reason.
+//
+// The transfer encoding must be base64. It is the default of the three the
+// specification allows (template.js:3400-3404, where getStringOption takes the
+// first), and it is the only one that carries the bytes in the template.
+func xfaPicture(b xfa.Box, pageHeight float64) (*placedPicture, string) {
+	if b.Node == nil || b.Node.Template == nil {
+		return nil, ""
+	}
+	v := b.Node.Template.Child("value")
+	if v == nil {
+		return nil, ""
+	}
+	img := v.Child("image")
+	if img == nil {
+		return nil, ""
+	}
+	if href := img.Get("href"); href != "" {
+		return nil, "its picture is a file outside the document (href=" + href + ")"
+	}
+	if enc := img.Get("transferEncoding"); enc != "" && enc != "base64" {
+		return nil, "its picture is carried as " + enc + " rather than base64"
+	}
+	if ct := strings.ToLower(img.Get("contentType")); ct != "" && !xfaImageMIMEs[ct] {
+		return nil, "its picture says it is " + ct
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(img.Text), ""))
+	if err != nil {
+		return nil, "its picture is not the base64 it says it is"
+	}
+	pic, err := readPicture(raw)
+	if err != nil {
+		return nil, "its picture cannot be read: " + err.Error()
+	}
+	// A picture's own size is its pixels at its own resolution, which is what
+	// aspect="actual" draws it at and what the box was written from.
+	dx, dy := pictureDPI(raw)
+	x, y := b.Rect.X.Points(), b.Rect.Y.Points()
+	w, h := xfaFitPicture(img.Get("aspect"), b.Rect.W.Points(), b.Rect.H.Points(),
+		float64(pic.width)/dx*72, float64(pic.height)/dy*72)
+	// The picture is anchored at the top left of the box it was measured for,
+	// which is where pdfium starts it before any alignment moves it
+	// (cxfa_ffwidget.cpp:55-57). A PDF draws up from the bottom of the sheet,
+	// so the top of the box is as far below the top of the sheet as the form
+	// says, and the picture hangs its own height below that.
+	return &placedPicture{pic: pic, rect: [4]float64{x, pageHeight - y - h, w, h}}, ""
+}
+
+// xfaFitPicture is how big a picture is drawn in the box measured for it.
+//
+// The arithmetic is pdfium's, read from XFA_DrawImage
+// (xfa/fxfa/cxfa_ffwidget.cpp:55-86), because pdf.js declines to settle it:
+// for "fit" and "actual" it emits no style at all and leaves the answer to the
+// browser's natural sizing of an <img> (template.js:3446-3451, with its own
+// "TODO: check what to do with actual"). A PDF has no such fallback — some
+// rectangle has to be written down — so the implementation closest to Adobe's
+// is the one followed.
+//
+//   - fit, the default: scaled by the smaller of the two ratios, so the whole
+//     picture is inside the box and its proportions are kept.
+//   - height: as tall as the box, as wide as that scaling makes it.
+//   - width: as wide as the box, as tall as that scaling makes it.
+//   - none: exactly the box, in both directions, proportions be damned.
+//   - actual: its own size, unscaled.
+//
+// The natural size is given in POINTS, not pixels: the caller has already
+// converted by the picture's own resolution, as pdfium does before any of this
+// (XFA_UnitPx2Pt, cxfa_ffwidget.cpp:55-57). See [pictureDPI] for why that is
+// not a detail — it decides "actual" entirely, and every Canada Revenue Agency
+// form in the corpus writes aspect="actual".
+//
+// A box with no width or no height is nothing to fit against, so the picture
+// is drawn at its own size there whatever the aspect says.
+func xfaFitPicture(aspect string, boxW, boxH, natW, natH float64) (w, h float64) {
+	if natW <= 0 || natH <= 0 {
+		return boxW, boxH
+	}
+	if boxW <= 0 || boxH <= 0 {
+		return natW, natH
+	}
+	switch aspect {
+	case "none":
+		return boxW, boxH
+	case "actual":
+		return natW, natH
+	case "height":
+		return natW * (boxH / natH), boxH
+	case "width":
+		return boxW, natH * (boxW / natW)
+	default:
+		// "fit", and anything the template writes that is not one of the five.
+		f := boxH / natH
+		if g := boxW / natW; g < f {
+			f = g
+		}
+		return natW * f, natH * f
+	}
 }

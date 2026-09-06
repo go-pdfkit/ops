@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
+	"image"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,5 +103,31 @@ func TestFieldsVerbPointsAtTheOtherVerbWhenThePagesAreAPlaceholder(t *testing.T)
 	_, printed, _ := exec("fields", dynamicXFA(t, cliTemplate))
 	if !strings.Contains(printed, "pdfops xfa") {
 		t.Errorf("it does not point at the verb that draws the real form:\n%s", printed)
+	}
+}
+
+func TestXFAVerbCountsThePicturesItDrew(t *testing.T) {
+	// A form's printed background is a picture, and for one of the corpus's
+	// fourteen it is the whole form — so how many were drawn belongs in the
+	// line that says what came out.
+	img := image.NewGray(image.Rect(0, 0, 16, 16))
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	template := `<template><subform name="form1" layout="tb">
+	  <pageSet><pageArea name="Page1"><medium long="792pt" short="612pt"/>
+	    <contentArea x="0pt" y="0pt" w="500pt" h="500pt"/></pageArea></pageSet>
+	  <subform name="Body"><draw name="Logo" w="100pt" h="100pt">
+	    <value><image contentType="image/jpeg">` +
+		base64.StdEncoding.EncodeToString(buf.Bytes()) + `</image></value>
+	  </draw></subform></subform></template>`
+	code, printed, errOut := exec("xfa", dynamicXFA(t, template),
+		filepath.Join(t.TempDir(), "drawn.pdf"))
+	if code != 0 {
+		t.Fatalf("xfa said %d: %s", code, errOut)
+	}
+	if !strings.Contains(printed, "1 of them pictures") {
+		t.Errorf("it does not say what it drew:\n%s", printed)
 	}
 }
