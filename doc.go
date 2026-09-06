@@ -43,6 +43,13 @@ type Doc struct {
 	// protected or not.
 	packed  bool
 	protect *reader.Encryption
+
+	// forms are the page-forms already written during the write in progress,
+	// so a page drawn many times is embedded once. Made in [Doc.Bytes] and
+	// dropped with it: a reader.Ref belongs to the writer that issued it, and
+	// a cache outliving the write would hand the next one numbers that mean
+	// nothing there.
+	forms map[string]reader.Ref
 }
 
 // A Page is one page of a document, borrowed from the file it came from. The
