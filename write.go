@@ -39,6 +39,8 @@ func (d *Doc) Bytes() ([]byte, error) {
 	if d.packed {
 		w = reader.NewPackedWriter(d.version)
 	}
+	d.forms = map[string]reader.Ref{}
+	defer func() { d.forms = nil }()
 	if d.protect != nil {
 		// Before anything is written: a file cannot be protected after the
 		// fact, because the key is what everything in it is written through.
