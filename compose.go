@@ -359,6 +359,11 @@ func (d *Doc) madeContent(w *reader.Writer, p Page, area [4]float64) ([]byte, re
 	case p.picture != nil:
 		content, resources = d.pictureContent(w, p, area)
 	}
+	if len(p.pictures) > 0 {
+		pics, res := placedContent(w, p)
+		content = append(content, pics...)
+		resources = mergeResources(resources, res)
+	}
 	if len(p.marks) > 0 {
 		stamp, fonts, alpha := d.stampContent(p, area)
 		content = append(content, stamp...)

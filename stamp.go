@@ -46,9 +46,21 @@ type Stamp struct {
 }
 
 // stampInstance is one stamp already resolved for a particular page.
+//
+// A stamp put on by [Doc.Stamp] carries neither at nor outline: it is placed
+// by one of the nine [Position]s, which is what a watermark or a page number
+// wants. A caller that has already worked out where something goes — a form
+// laid out from its own description, as [FromXFA] does — sets at instead, and
+// the position is not consulted.
 type stampInstance struct {
 	stamp Stamp
 	text  string
+	// at is the left end of the baseline, absolute on the page, when the
+	// caller placed the text rather than anchoring it.
+	at *[2]float64
+	// outline is a rule to draw, as x, y, width and height. A mark may be an
+	// outline and no text, which is how a field's box is drawn.
+	outline *[4]float64
 }
 
 // Stamp draws text on the pages a range names.
@@ -136,6 +148,16 @@ func (d *Doc) stampContent(p Page, area [4]float64) (content []byte, fonts map[F
 	alpha = map[string]float64{}
 	var buf bytes.Buffer
 	for _, m := range p.marks {
+		if m.outline != nil {
+			// A rule is drawn in the same grey whatever it surrounds: it is
+			// there to show where a box is, not to be looked at.
+			fmt.Fprintf(&buf, "q 0.6 0.6 0.6 RG 0.5 w %s %s %s %s re S Q\n",
+				number(m.outline[0]), number(m.outline[1]),
+				number(m.outline[2]), number(m.outline[3]))
+		}
+		if m.text == "" {
+			continue
+		}
 		s := m.stamp
 		if s.Size == 0 {
 			s.Size = 12
@@ -149,6 +171,9 @@ func (d *Doc) stampContent(p Page, area [4]float64) (content []byte, fonts map[F
 		// the ascent and descent of the standard faces to centre by.
 		ascent, descent := s.Size*0.72, s.Size*0.21
 		x, y := place(s.Position, area, width, ascent+descent, s.Margin)
+		if m.at != nil {
+			x, y = m.at[0], m.at[1]
+		}
 
 		buf.WriteString("q\n")
 		if s.Opacity > 0 && s.Opacity < 1 {

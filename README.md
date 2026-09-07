@@ -209,3 +209,83 @@ takes the pages apart and builds a new document round them, and a form is tied
 into a document by object number in a dozen places at once — so merging,
 splitting or rotating a form's pages loses the form. Use `fill` on the file
 itself.
+
+## The form inside a blank document
+
+Some PDFs are blank to look at and are not blank. Their pages hold one panel —
+"Please wait... your PDF viewer may not be able to display this type of
+document" — and the real form exists only as XML beside them, laid out when
+Adobe's own reader opens it. Adobe removed the format from PDF 2.0; no browser
+and no other reader lays one out.
+
+`pdfops xfa` lays it out and draws it, which turns such a file into one
+anything can show.
+
+```
+$ pdfops xfa t1135-fill-23e.pdf readable.pdf
+6 sheets, 497 elements drawn
+```
+
+Measured over every dynamic form in a corpus of 2 240 real government forms —
+fourteen of them, from the Canada Revenue Agency, the French cerfa series, the
+US Department of Labor and the Office of Personnel Management: **all fourteen
+laid out, 111 sheets, 9 808 elements, nothing left unplaced**, and every file
+read back by poppler.
+
+WHERE each element goes is [go-pdfkit/xfa](https://github.com/go-pdfkit/xfa)'s,
+measured against pdf.js and pdfium. What is drawn INSIDE each box is this
+package's own and much simpler: the four standard faces, a greedy line break,
+a rule round each field. So this is **legibility rather than fidelity** — the
+difference between a blank sheet and a form somebody can read, not between this
+and Adobe.
+
+**Pictures are drawn** — 27 of them across twelve of the fourteen. For most
+that is a logo; for French cerfa 12064 it is the whole printed form. That one
+carries 212 fields, 7 draws, 4 images and — counted, not guessed — no `<text>`
+and no `<caption>` whatever, so without its pictures it is a grid of empty
+boxes and with them it is the customs declaration it is. How big each one is
+drawn follows pdfium's own arithmetic (`xfa/fxfa/cxfa_ffwidget.cpp:55-86`),
+because pdf.js declines to settle `fit` and `actual` and leaves them to a
+browser's sizing of an `<img>`.
+
+**A picture's own size is its pixels at its own resolution**, read from a PNG's
+`pHYs` chunk or a JPEG's JFIF density, and that is not a detail. Every Canada
+Revenue Agency form in the corpus writes `aspect="actual"`, and their logos are
+1200-dpi PNGs: 2617 pixels across is 157.02 points, which is to a hundredth of
+a point the width the template writes for the box. Taken at 72 dpi — one point
+per pixel, the assumption for a picture that declares nothing — the same logo
+is 2617 points wide and covers a third of the sheet in black. It did, until the
+render was looked at.
+
+**Page numbers come out right** — "Page 3 of 11", and "Page 3 sur 4" on a
+French form — without running the form's scripts. A footer like that is not
+text: it is rich text holding a *floating field* naming a hidden field whose
+value a script sets. All sixteen of those in the corpus ask one of exactly two
+things:
+
+```
+this.rawValue = xfa.layout.page(this);
+this.rawValue = xfa.layout.pageCount();
+```
+
+Those are questions asked **of the layout**, which has just answered them.
+Recognising the two and handing back what the pager computed is not evaluating
+anything. Neither reference does this — pdf.js's layout ignores `xfa:embed`
+entirely, pdfium runs a JavaScript engine — so it is named as ours. Anything
+else a floating field names is left as a gap, because a wrong number that looks
+right is worse than a blank: four cerfa fields carry a static default beside
+their script, and printing that would put "Page 1 of 1" on every sheet.
+
+Two limits, both named rather than left to be discovered:
+
+- **A picture in a file outside the document is not fetched.** That is pdf.js's
+  position and its words: *"we don't get remote data and use what we have in the
+  pdf itself, so no picture for non null href"*. Two of cerfa 12818's are like
+  that, and both name an absolute path on the machine of whoever drew the form
+  — `C:\Users\…\Downloads\logo ministere.PNG`. They are reported, not passed
+  over.
+- **Text is set smaller rather than cut off.** The box was measured with the
+  font the template names and this draws in Helvetica, which is wider; at the
+  template's own size the words come to more lines than the box holds. The size
+  comes down until they fit, with a floor of four points, because losing the
+  end of a sentence is worse than setting it a point smaller.
