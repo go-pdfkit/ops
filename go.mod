@@ -20,7 +20,7 @@ require (
 )
 
 require (
-	github.com/go-gfx/gfx v0.19.0
+	github.com/go-gfx/gfx v0.20.0
 	github.com/go-opentype/fonts v0.9.0 // indirect
 	github.com/go-opentype/opentype v0.12.0 // indirect
 	github.com/go-pdfkit/pdffont v0.3.1 // indirect
