@@ -11,7 +11,7 @@ require (
 
 require (
 	github.com/ajroetker/go-highway v0.0.4 // indirect
-	github.com/ajroetker/go-jpeg2000 v0.0.2 // indirect
+	github.com/go-images/jpeg2000 v0.1.0 // indirect
 	github.com/sergeymakinen/go-bmp v1.0.0 // indirect
 	github.com/sergeymakinen/go-ico v1.0.0 // indirect
 	github.com/tannevaled/gobig2 v0.1.0 // indirect
@@ -20,7 +20,7 @@ require (
 )
 
 require (
-	github.com/go-gfx/gfx v0.24.0
+	github.com/go-gfx/gfx v0.26.0
 	github.com/go-opentype/fonts v0.9.0 // indirect
 	github.com/go-opentype/opentype v0.12.0 // indirect
 	github.com/go-pdfkit/pdffont v0.3.1 // indirect
