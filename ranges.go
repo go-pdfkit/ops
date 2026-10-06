@@ -33,6 +33,23 @@ func ParseRange(spec string, pageCount int) ([]int, error) {
 func parseRangePart(part string, pageCount int) ([]int, error) {
 	switch strings.ToLower(part) {
 	case "all", "*":
+		// ⛔ All of an empty document is NOTHING. sequence(1, 0) takes its
+		// descending branch -- the one that makes `3-1` reverse three pages,
+		// and which is right for that -- and hands back [1 0]: two page
+		// numbers the document has not got, with no error beside them.
+		//
+		// Every other spec already refuses or returns nothing here: "last"
+		// says the document is empty, "1" and "1-" say they are outside it,
+		// "odd" and "even" return nothing at all. "all" was the one that
+		// answered with pages.
+		//
+		// It panics rather than misbehaves quietly: ops.Resize("all", …) on a
+		// document with no pages indexes d.pages[0] and dies with "index out
+		// of range [0] with length 0", and `pdfops resize -to a4` on such a
+		// file is all it takes to reach it.
+		if pageCount == 0 {
+			return nil, nil
+		}
 		return sequence(1, pageCount), nil
 	case "even":
 		return every(2, pageCount), nil
