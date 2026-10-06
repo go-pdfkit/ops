@@ -1100,3 +1100,33 @@ func TestFillVerbOnAFieldWithNowhereToBeWritten(t *testing.T) {
 		t.Error("a field with nowhere to be written was written anyway")
 	}
 }
+
+// ⛔ `-pages all` over a file with no pages used to take the whole command
+// down with "index out of range [0] with length 0".
+//
+// ops.ParseRange("all", 0) returned [1 0] -- sequence(1, 0) takes its
+// descending branch, the one that makes `3-1` reverse three pages -- so a verb
+// indexed d.pages[0] on a document that had none. A refusal is the right
+// answer; a panic is never one, and a command that dies on a file somebody
+// handed it teaches them to distrust the whole tool.
+func TestAVerbOverAPagelessFileRefusesRatherThanPanics(t *testing.T) {
+	in := pagelessFixture(t)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	for _, args := range [][]string{
+		{"crop", "-pages", "all", "-box", "0,0,100,100", in, out},
+		{"rotate", "-pages", "all", "-by", "90", in, out},
+		{"select", "-pages", "all", in, out},
+		{"delete", "-pages", "all", in, out},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("panicked: %v", r)
+				}
+			}()
+			if code, _, _ := exec(args...); code != 1 {
+				t.Errorf("code %d, want a refusal", code)
+			}
+		})
+	}
+}
