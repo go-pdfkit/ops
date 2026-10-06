@@ -38,6 +38,9 @@ pdfops split -every 10 book.pdf chapters/
 pdfops reverse back-to-front.pdf right-way-round.pdf
 pdfops nup -n 4 slides.pdf handout.pdf
 pdfops booklet chapter.pdf to-fold.pdf
+pdfops interleave both.pdf fronts.pdf backs.pdf
+pdfops onepage strip.pdf one-long-page.pdf
+pdfops poster -across 2 -down 2 plan.pdf tiles.pdf
 pdfops overlay -with letterhead.pdf plain.pdf headed.pdf
 pdfops blank -before 3 report.pdf report-with-a-gap.pdf
 pdfops watermark -text CONFIDENTIAL contract.pdf marked.pdf
@@ -54,6 +57,12 @@ pdfops -password letmein permissions locked.pdf
 pdfops text paper.pdf
 pdfops text -layout -pages 1 paper.pdf
 pdfops images paper.pdf pictures/
+pdfops attachments report.pdf
+pdfops attachments -to files/ report.pdf
+pdfops attach -file figures.csv -description "the figures" report.pdf with.pdf
+pdfops detach -name figures.csv with.pdf without.pdf
+pdfops outline -from toc.txt book.pdf bookmarked.pdf
+pdfops outline -drop bookmarked.pdf plain.pdf
 pdfops info file.pdf
 ```
 
@@ -62,6 +71,33 @@ A page range is written `1-3,7,10-` and may say `all`, `even`, `odd` or
 reverses three pages and `select -pages 1,1` gives you two copies.
 
 `-password` opens an encrypted file.
+
+`interleave` takes one page from each file in turn, which is how two
+single-sided scans — the fronts and the backs — become one double-sided
+document. `onepage` stacks every page onto a single long one. `poster` cuts
+each page into tiles so a plan can be printed larger than the paper and
+assembled.
+
+`attachments` lists the files a document carries, and writes them out with
+`-to`. A name comes out of the document rather than from whoever runs the
+command, so it is stripped to its last element: `../escaped.txt` is written
+*inside* the directory asked for, and a name with no usable last element is
+refused rather than skipped. `detach` refuses a name the file does not carry,
+instead of writing an unchanged copy somebody then sends believing it was
+removed.
+
+`outline` replaces the bookmarks from a file, or removes them with `-drop`.
+The file is one bookmark a line — a title, a tab, a page number — with two
+spaces of indent for each level of nesting:
+
+```
+Introduction	1
+  Why	2
+Chapter one	7
+```
+
+A line it cannot read is an error naming the line, because a table of contents
+quietly missing an entry is worse than one that refuses to be written.
 
 `text` reads the page back as words, and `-layout` says where every piece of
 it sits — a page, a place, a size, and what it says. A piece the document

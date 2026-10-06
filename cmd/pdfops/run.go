@@ -42,6 +42,9 @@ var commands = []command{
 	{"split", "-every <n> <in.pdf> <out-directory>", "cut into files of at most n pages", runSplit},
 	{"nup", "-n <count> <in.pdf> <out.pdf>", "lay several pages on each sheet", runNUp},
 	{"booklet", "<in.pdf> <out.pdf>", "order and lay out for saddle-stitch printing", runBooklet},
+	{"interleave", "<out.pdf> <in.pdf> <in.pdf> [in.pdf …]", "take one page from each in turn", runInterleave},
+	{"onepage", "<in.pdf> <out.pdf>", "put every page onto a single page", runOnePage},
+	{"poster", "-across <n> -down <n> <in.pdf> <out.pdf>", "cut each page into tiles, to print larger than the paper", runPoster},
 	{"overlay", "-with <mark.pdf> <in.pdf> <out.pdf>", "draw another file over these pages", runOverlay},
 	{"blank", "-before <page> <in.pdf> <out.pdf>", "insert an empty page", runBlank},
 	{"watermark", "-text <words> <in.pdf> <out.pdf>", "draw pale slanted text across the pages", runWatermark},
@@ -51,6 +54,7 @@ var commands = []command{
 	{"info", "<in.pdf>", "print what the file says about itself", runInfo},
 	{"strip", "[-annotations] [-bookmarks] <in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
 	{"sanitize", "<in.pdf> <out.pdf>", "remove what runs rather than shows: scripts, launching, embedded files", runSanitize},
+	{"outline", "(-drop | -from <toc.txt>) <in.pdf> <out.pdf>", "replace or remove the bookmarks", runOutline},
 	{"flatten", "<in.pdf> <out.pdf>", "draw the annotations into the page and drop them", runFlatten},
 	{"compress", "<in.pdf> <out.pdf>", "pack the objects into compressed streams", runCompress},
 	{"encrypt", "-user <password> [-owner <password>] [-allow <what>] [-aes128] <in.pdf> <out.pdf>", "protect the file with a password", runEncrypt},
@@ -58,6 +62,9 @@ var commands = []command{
 	{"permissions", "<in.pdf>", "say how the file is protected and what it allows", runPermissions},
 	{"text", "[-pages <range>] [-layout] <in.pdf>", "read the text off the pages", runText},
 	{"images", "[-pages <range>] <in.pdf> <out-directory>", "write out the pictures the pages place", runImages},
+	{"attachments", "[-to <directory>] <in.pdf>", "list the files the document carries, or write them out", runAttachments},
+	{"attach", "-file <path> [-as <name>] [-description <text>] <in.pdf> <out.pdf>", "carry a file inside the document", runAttach},
+	{"detach", "-name <name> <in.pdf> <out.pdf>", "drop a file the document carries", runDetach},
 	{"fields", "<in.pdf>", "list what a form asks for and what it holds", runFields},
 	{"fill", "-set <name>=<value> [-set ...] <in.pdf> <out.pdf>", "fill in a form and save it", runFill},
 	{"xfa", "<in.pdf> <out.pdf>", "draw the form inside a file whose pages are a placeholder", runXFA},
@@ -1049,4 +1056,294 @@ func runXFA(c *context, args []string) error {
 		fmt.Fprintf(c.out, "  not drawn: %s\n", u)
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Verbs over library functions that already existed and nothing exposed.
+//
+// ops.Interleave, ops.OnePage, ops.Poster, ops.Attach/Detach/Attachments and
+// ops.SetOutline/DropOutlines were written, tested and reachable from Go, and
+// a person with a PDF and a terminal could not get at any of them. Each of
+// these is a thin wrapper: the work, and the tests that prove it, are in the
+// package.
+// ---------------------------------------------------------------------------
+
+// runInterleave takes one page from each document in turn.
+//
+// Shaped like merge — the output first — because it is the same kind of verb,
+// several files in and one out, and two different argument orders for that
+// shape is a way to lose a file.
+func runInterleave(c *context, args []string) error {
+	fs := flags("interleave")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 3 {
+		return fmt.Errorf("expected <out.pdf> <in.pdf> <in.pdf> [in.pdf …]")
+	}
+	first, err := c.open(fs.Arg(1))
+	if err != nil {
+		return err
+	}
+	var rest []*ops.Doc
+	for _, in := range fs.Args()[2:] {
+		d, err := c.open(in)
+		if err != nil {
+			return err
+		}
+		rest = append(rest, d)
+	}
+	if err := first.Interleave(rest...); err != nil {
+		return err
+	}
+	return save(first, fs.Arg(0))
+}
+
+// runOnePage puts every page of a document onto a single page.
+func runOnePage(c *context, args []string) error {
+	fs := flags("onepage")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.OnePage(); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+// runPoster cuts each page into tiles, so a page can be printed larger than
+// the paper and assembled.
+func runPoster(c *context, args []string) error {
+	fs := flags("poster")
+	across := fs.Int("across", 2, "how many tiles across each page becomes")
+	down := fs.Int("down", 2, "how many tiles down each page becomes")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.Poster(*across, *down); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+// runAttachments lists the files a document carries, or writes them out.
+//
+// Listing is the default because that is the question somebody has first, and
+// because writing files to disk should be asked for rather than assumed.
+func runAttachments(c *context, args []string) error {
+	fs := flags("attachments")
+	to := fs.String("to", "", "write the files into this directory instead of listing them")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 1, "[-to <directory>] <in.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	carried := d.Attachments()
+	if len(carried) == 0 {
+		fmt.Fprintln(c.out, "the file carries nothing")
+		return nil
+	}
+	if *to == "" {
+		for _, a := range carried {
+			if a.Description != "" {
+				fmt.Fprintf(c.out, "%s\t%d bytes\t%s\n", a.Name, len(a.Data), a.Description)
+				continue
+			}
+			fmt.Fprintf(c.out, "%s\t%d bytes\n", a.Name, len(a.Data))
+		}
+		return nil
+	}
+	if err := os.MkdirAll(*to, 0o755); err != nil {
+		return err
+	}
+	for _, a := range carried {
+		// The name comes out of the document, so it is not ours to trust: a
+		// name holding a separator or `..` would write outside the directory
+		// that was asked for. Take the last element and nothing else.
+		name := filepath.Base(filepath.FromSlash(a.Name))
+		if name == "." || name == string(filepath.Separator) || name == ".." {
+			return fmt.Errorf("attachment %q has no usable file name", a.Name)
+		}
+		if err := os.WriteFile(filepath.Join(*to, name), a.Data, 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintln(c.out, filepath.Join(*to, name))
+	}
+	return nil
+}
+
+// runAttach carries a file inside the document.
+func runAttach(c *context, args []string) error {
+	fs := flags("attach")
+	file := fs.String("file", "", "the file to carry")
+	as := fs.String("as", "", "what the document should call it (default: the file's own name)")
+	description := fs.String("description", "", "what the file is")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *file == "" {
+		return fmt.Errorf("expected -file <path>")
+	}
+	if err := wantArgs(fs, 2, "-file <path> [-as <name>] [-description <text>] <in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(*file)
+	if err != nil {
+		return err
+	}
+	name := *as
+	if name == "" {
+		name = filepath.Base(*file)
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.Attach(name, data, *description); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+// runDetach drops a file the document carries.
+func runDetach(c *context, args []string) error {
+	fs := flags("detach")
+	name := fs.String("name", "", "the attachment to drop")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *name == "" {
+		return fmt.Errorf("expected -name <name>")
+	}
+	if err := wantArgs(fs, 2, "-name <name> <in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	// ⛔ Refuse rather than write an unchanged copy. `detach -name typo` that
+	// succeeds and removes nothing is the shape of a mistake somebody only
+	// finds out about later, when the file they meant to remove is still in
+	// what they sent.
+	if !d.Detach(*name) {
+		return fmt.Errorf("the file carries nothing called %q", *name)
+	}
+	return save(d, fs.Arg(1))
+}
+
+// runOutline replaces or removes a document's bookmarks.
+func runOutline(c *context, args []string) error {
+	fs := flags("outline")
+	drop := fs.Bool("drop", false, "remove the bookmarks instead of replacing them")
+	from := fs.String("from", "", "a file of bookmarks: Title, a tab, a page number, two spaces of indent per level")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	switch {
+	case *drop && *from != "":
+		return fmt.Errorf("expected one of -drop or -from, not both")
+	case !*drop && *from == "":
+		return fmt.Errorf("expected -drop or -from <toc.txt>")
+	}
+	if err := wantArgs(fs, 2, "(-drop | -from <toc.txt>) <in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if *drop {
+		d.DropOutlines()
+		return save(d, fs.Arg(1))
+	}
+	text, err := os.ReadFile(*from)
+	if err != nil {
+		return err
+	}
+	marks, err := parseOutline(string(text))
+	if err != nil {
+		return err
+	}
+	d.SetOutline(marks)
+	return save(d, fs.Arg(1))
+}
+
+// parseOutline reads a bookmark file: one bookmark a line, a title, a tab and
+// a page number, with two spaces of indent for each level of nesting.
+//
+//	Introduction→1
+//	  Why→2
+//	Chapter one→7
+//
+// A line it cannot read is an error naming the line, because a table of
+// contents quietly missing an entry is worse than one that refuses to be
+// written.
+func parseOutline(text string) ([]ops.Bookmark, error) {
+	type level struct {
+		depth int
+		marks *[]ops.Bookmark
+	}
+	var root []ops.Bookmark
+	stack := []level{{depth: -1, marks: &root}}
+
+	for i, line := range strings.Split(text, "\n") {
+		n := i + 1
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		body := strings.TrimLeft(line, " ")
+		indent := len(line) - len(body)
+		if indent%2 != 0 {
+			return nil, fmt.Errorf("line %d: indented by %d spaces, which is not a whole number of levels of two", n, indent)
+		}
+		depth := indent / 2
+
+		title, page, ok := strings.Cut(body, "\t")
+		if !ok {
+			return nil, fmt.Errorf("line %d: expected a title, a tab and a page number", n)
+		}
+		title = strings.TrimSpace(title)
+		if title == "" {
+			return nil, fmt.Errorf("line %d: the title is empty", n)
+		}
+		p, err := strconv.Atoi(strings.TrimSpace(page))
+		if err != nil {
+			return nil, fmt.Errorf("line %d: %q is not a page number", n, strings.TrimSpace(page))
+		}
+		if p < 1 {
+			return nil, fmt.Errorf("line %d: page %d, and pages start at 1", n, p)
+		}
+
+		for len(stack) > 1 && stack[len(stack)-1].depth >= depth {
+			stack = stack[:len(stack)-1]
+		}
+		if depth > stack[len(stack)-1].depth+1 {
+			return nil, fmt.Errorf("line %d: indented %d levels under one at %d, so a level is missing between them",
+				n, depth, stack[len(stack)-1].depth)
+		}
+		parent := stack[len(stack)-1].marks
+		*parent = append(*parent, ops.Bookmark{Title: title, Page: p})
+		stack = append(stack, level{depth: depth, marks: &(*parent)[len(*parent)-1].Children})
+	}
+	return root, nil
 }
