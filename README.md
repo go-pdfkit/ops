@@ -34,6 +34,9 @@ pdfops select -pages 3-7,last report.pdf extract.pdf
 pdfops delete -pages even scan.pdf fronts.pdf
 pdfops rotate -pages all -by 90 sideways.pdf upright.pdf
 pdfops crop -box 20,20,575,820 wide.pdf trimmed.pdf
+pdfops resize -to a4 odd-sizes.pdf a4.pdf
+pdfops resize -to a4 -landscape slides.pdf wide.pdf
+pdfops move -from 1 -to 3 misplaced.pdf ordered.pdf
 pdfops split -every 10 book.pdf chapters/
 pdfops reverse back-to-front.pdf right-way-round.pdf
 pdfops nup -n 4 slides.pdf handout.pdf
@@ -42,6 +45,7 @@ pdfops interleave both.pdf fronts.pdf backs.pdf
 pdfops onepage strip.pdf one-long-page.pdf
 pdfops poster -across 2 -down 2 plan.pdf tiles.pdf
 pdfops overlay -with letterhead.pdf plain.pdf headed.pdf
+pdfops underlay -with watermark.pdf report.pdf behind.pdf
 pdfops blank -before 3 report.pdf report-with-a-gap.pdf
 pdfops watermark -text CONFIDENTIAL contract.pdf marked.pdf
 pdfops number -format "{page} of {pages}" report.pdf numbered.pdf
@@ -56,6 +60,7 @@ pdfops -password letmein decrypt locked.pdf plain.pdf
 pdfops -password letmein permissions locked.pdf
 pdfops text paper.pdf
 pdfops text -layout -pages 1 paper.pdf
+pdfops text -layout -json paper.pdf
 pdfops images paper.pdf pictures/
 pdfops attachments report.pdf
 pdfops attachments -to files/ report.pdf
@@ -64,6 +69,9 @@ pdfops detach -name figures.csv with.pdf without.pdf
 pdfops outline -from toc.txt book.pdf bookmarked.pdf
 pdfops outline -drop bookmarked.pdf plain.pdf
 pdfops info file.pdf
+pdfops metadata -set 'Title=The Report' -set Author=Someone draft.pdf titled.pdf
+pdfops metadata -clear draft.pdf anonymous.pdf
+pdfops version -set 1.7 old.pdf declared.pdf
 ```
 
 A page range is written `1-3,7,10-` and may say `all`, `even`, `odd` or
@@ -98,6 +106,22 @@ Chapter one	7
 
 A line it cannot read is an error naming the line, because a table of contents
 quietly missing an entry is worse than one that refuses to be written.
+
+`resize` sets how big a page **is**; `crop` sets what of it **shows**. Two
+verbs, because they are two questions. A size is a box in points, or one of
+`a3`, `a4`, `a5`, `letter`, `legal`, `tabloid` — derived from their definitions
+rather than typed, so A4 is 210 × 297 mm at 72 points to the inch and not a
+number somebody copied. `-landscape` turns a named size on its side.
+
+`metadata` writes what `info` prints. A key is given the way the PDF names it,
+with or without the leading slash, because a person reading `info` sees `Title`
+and should be able to type what they saw.
+
+`text -json` writes the same reading as the lines, in a shape something else
+can parse without splitting on tabs. With `-layout` each run carries its
+position, its size, and whether it was invisible or unreadable — and those two
+are **written even when false**, because a reader that cannot tell "this run is
+readable" from "this tool did not say" is reading a guess.
 
 `text` reads the page back as words, and `-layout` says where every piece of
 it sits — a page, a place, a size, and what it says. A piece the document
