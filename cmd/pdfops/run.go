@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -39,6 +40,8 @@ var commands = []command{
 	{"reverse", "<in.pdf> <out.pdf>", "put the pages in the opposite order", runReverse},
 	{"rotate", "-pages <range> -by <degrees> <in.pdf> <out.pdf>", "turn pages by a multiple of ninety", runRotate},
 	{"crop", "-pages <range> -box <l,b,r,t> <in.pdf> <out.pdf>", "set the visible area, in points", runCrop},
+	{"resize", "[-pages <range>] (-box <l,b,r,t> | -to <name> [-landscape]) <in.pdf> <out.pdf>", "set how big the pages are", runResize},
+	{"move", "-from <page> -to <page> <in.pdf> <out.pdf>", "take a page out and put it back elsewhere", runMove},
 	{"split", "-every <n> <in.pdf> <out-directory>", "cut into files of at most n pages", runSplit},
 	{"nup", "-n <count> <in.pdf> <out.pdf>", "lay several pages on each sheet", runNUp},
 	{"booklet", "<in.pdf> <out.pdf>", "order and lay out for saddle-stitch printing", runBooklet},
@@ -46,12 +49,15 @@ var commands = []command{
 	{"onepage", "<in.pdf> <out.pdf>", "put every page onto a single page", runOnePage},
 	{"poster", "-across <n> -down <n> <in.pdf> <out.pdf>", "cut each page into tiles, to print larger than the paper", runPoster},
 	{"overlay", "-with <mark.pdf> <in.pdf> <out.pdf>", "draw another file over these pages", runOverlay},
+	{"underlay", "-with <mark.pdf> <in.pdf> <out.pdf>", "draw another file beneath these pages", runUnderlay},
 	{"blank", "-before <page> <in.pdf> <out.pdf>", "insert an empty page", runBlank},
 	{"watermark", "-text <words> <in.pdf> <out.pdf>", "draw pale slanted text across the pages", runWatermark},
 	{"number", "-format <text> <in.pdf> <out.pdf>", "write page numbers at the foot", runNumber},
 	{"bates", "-prefix <text> -start <n> <in.pdf> <out.pdf>", "stamp a running serial, exhibit style", runBates},
 	{"stamp", "-text <words> -at <place> <in.pdf> <out.pdf>", "draw a line of text where you say", runStamp},
 	{"info", "<in.pdf>", "print what the file says about itself", runInfo},
+	{"metadata", "(-set <Key=value> … | -clear) <in.pdf> <out.pdf>", "write what the file says about itself", runMetadata},
+	{"version", "-set <version> <in.pdf> <out.pdf>", "set the PDF version the file declares", runVersion},
 	{"strip", "[-annotations] [-bookmarks] <in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
 	{"sanitize", "<in.pdf> <out.pdf>", "remove what runs rather than shows: scripts, launching, embedded files", runSanitize},
 	{"outline", "(-drop | -from <toc.txt>) <in.pdf> <out.pdf>", "replace or remove the bookmarks", runOutline},
@@ -60,7 +66,7 @@ var commands = []command{
 	{"encrypt", "-user <password> [-owner <password>] [-allow <what>] [-aes128] <in.pdf> <out.pdf>", "protect the file with a password", runEncrypt},
 	{"decrypt", "<in.pdf> <out.pdf>", "write the file without its protection", runDecrypt},
 	{"permissions", "<in.pdf>", "say how the file is protected and what it allows", runPermissions},
-	{"text", "[-pages <range>] [-layout] <in.pdf>", "read the text off the pages", runText},
+	{"text", "[-pages <range>] [-layout] [-json] <in.pdf>", "read the text off the pages", runText},
 	{"images", "[-pages <range>] <in.pdf> <out-directory>", "write out the pictures the pages place", runImages},
 	{"attachments", "[-to <directory>] <in.pdf>", "list the files the document carries, or write them out", runAttachments},
 	{"attach", "-file <path> [-as <name>] [-description <text>] <in.pdf> <out.pdf>", "carry a file inside the document", runAttach},
@@ -797,6 +803,7 @@ func runText(c *context, args []string) error {
 	fs := flags("text")
 	spec := fs.String("pages", "all", "which pages to read")
 	layout := fs.Bool("layout", false, "print where each piece of text sits as well as what it says")
+	asJSON := fs.Bool("json", false, "write JSON rather than lines, for something that is going to parse it")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -810,6 +817,9 @@ func runText(c *context, args []string) error {
 	pages, err := ops.ParseRange(*spec, src.PageCount())
 	if err != nil {
 		return err
+	}
+	if *asJSON {
+		return writeTextJSON(c, src, pages, *layout)
 	}
 	for _, page := range pages {
 		// Every page here came from the range, so it is one the document
@@ -826,6 +836,49 @@ func runText(c *context, args []string) error {
 		fmt.Fprintln(c.out, text)
 	}
 	return nil
+}
+
+// jsonRun is one piece of text, with where it sits when -layout asked for it.
+//
+// Invisible and Unreadable are NOT omitted when false. A reader that has to
+// tell "this run is readable" from "this tool did not say" would be reading a
+// guess, and the whole point of the layout output is that what could not be
+// read comes back marked rather than guessed at.
+type jsonRun struct {
+	Page       int      `json:"page"`
+	X          *float64 `json:"x,omitempty"`
+	Y          *float64 `json:"y,omitempty"`
+	Size       *float64 `json:"size,omitempty"`
+	Text       string   `json:"text"`
+	Invisible  *bool    `json:"invisible,omitempty"`
+	Unreadable *bool    `json:"unreadable,omitempty"`
+}
+
+// writeTextJSON writes the same reading as the lines above, in a shape
+// something else can parse without splitting on tabs.
+func writeTextJSON(c *context, src *reader.Document, pages []int, layout bool) error {
+	// An empty result is `[]`, never `null`: a caller testing the length of
+	// what came back should not have to test for nothing first.
+	out := []jsonRun{}
+	for _, page := range pages {
+		if layout {
+			runs, _ := extract.Runs(src, page)
+			for _, r := range runs {
+				x, y, size := r.X, r.Y, r.Size
+				invisible, unreadable := r.Invisible, r.Unreadable
+				out = append(out, jsonRun{
+					Page: page, X: &x, Y: &y, Size: &size, Text: r.Text,
+					Invisible: &invisible, Unreadable: &unreadable,
+				})
+			}
+			continue
+		}
+		text, _ := extract.Text(src, page)
+		out = append(out, jsonRun{Page: page, Text: text})
+	}
+	enc := json.NewEncoder(c.out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
 
 // marks says what is unusual about a run, in front of what it says.
@@ -1346,4 +1399,207 @@ func parseOutline(text string) ([]ops.Bookmark, error) {
 		stack = append(stack, level{depth: depth, marks: &(*parent)[len(*parent)-1].Children})
 	}
 	return root, nil
+}
+
+// paperSizes are the page sizes a person names rather than measures, in
+// points, DERIVED from their definitions rather than typed: ISO 216 fixes the
+// A series in millimetres, and a point is 1/72 of an inch.
+//
+// Typing 595.28 x 841.89 would be right until somebody wanted A2.
+var paperSizes = func() map[string][2]float64 {
+	mm := func(w, h float64) [2]float64 { return [2]float64{w / 25.4 * 72, h / 25.4 * 72} }
+	in := func(w, h float64) [2]float64 { return [2]float64{w * 72, h * 72} }
+	return map[string][2]float64{
+		"a3":      mm(297, 420),
+		"a4":      mm(210, 297),
+		"a5":      mm(148, 210),
+		"letter":  in(8.5, 11),
+		"legal":   in(8.5, 14),
+		"tabloid": in(11, 17),
+	}
+}()
+
+// paperNames lists the sizes in a fixed order, so the error that names them
+// reads the same every time.
+func paperNames() []string {
+	names := make([]string, 0, len(paperSizes))
+	for n := range paperSizes {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// runResize sets the page size: a box in points, or a size by name.
+//
+// `crop` sets what of the page SHOWS; this sets how big the page IS. Two
+// verbs because they are two questions, and a flag on one of them would make
+// both harder to read.
+func runResize(c *context, args []string) error {
+	fs := flags("resize")
+	spec := fs.String("pages", "all", "which pages to resize")
+	box := fs.String("box", "", "the new page box, in points: l,b,r,t")
+	to := fs.String("to", "", "a size by name: "+strings.Join(paperNames(), ", "))
+	landscape := fs.Bool("landscape", false, "with -to, turn the named size on its side")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	switch {
+	case *box != "" && *to != "":
+		return fmt.Errorf("expected one of -box or -to, not both")
+	case *box == "" && *to == "":
+		return fmt.Errorf("expected -box <l,b,r,t> or -to <%s>", strings.Join(paperNames(), "|"))
+	case *landscape && *to == "":
+		return fmt.Errorf("-landscape says which way round a named size goes, so it needs -to")
+	}
+	if err := wantArgs(fs, 2, "(-box <l,b,r,t> | -to <name>) <in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+
+	var rect [4]float64
+	if *box != "" {
+		var err error
+		rect, err = parseBox(*box)
+		if err != nil {
+			return err
+		}
+	} else {
+		size, ok := paperSizes[strings.ToLower(*to)]
+		if !ok {
+			return fmt.Errorf("no size called %q; the ones there are: %s", *to, strings.Join(paperNames(), ", "))
+		}
+		w, h := size[0], size[1]
+		if *landscape {
+			w, h = h, w
+		}
+		rect = [4]float64{0, 0, w, h}
+	}
+
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.Resize(*spec, rect); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+// runMetadata writes what a document says about itself.
+//
+// `info` already prints it; this is the other half. A key is given the way the
+// PDF names it, with or without the slash, because a person reading `info`
+// sees `Title` and should be able to type what they saw.
+func runMetadata(c *context, args []string) error {
+	fs := flags("metadata")
+	var sets stringList
+	fs.Var(&sets, "set", "an entry to write, as Key=value; may be given more than once")
+	clear := fs.Bool("clear", false, "remove everything the document says about itself")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	switch {
+	case *clear && len(sets) > 0:
+		return fmt.Errorf("expected -clear or -set, not both")
+	case !*clear && len(sets) == 0:
+		return fmt.Errorf("expected -set <Key=value> or -clear")
+	}
+	if err := wantArgs(fs, 2, "(-set <Key=value> … | -clear) <in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if *clear {
+		d.ClearInfo()
+		return save(d, fs.Arg(1))
+	}
+	for _, s := range sets {
+		key, value, ok := strings.Cut(s, "=")
+		if !ok {
+			return fmt.Errorf("expected Key=value, got %q", s)
+		}
+		key = strings.TrimPrefix(strings.TrimSpace(key), "/")
+		if key == "" {
+			return fmt.Errorf("expected a key before the = in %q", s)
+		}
+		d.SetInfo(reader.Name(key), value)
+	}
+	return save(d, fs.Arg(1))
+}
+
+// runMove takes one page out and puts it back somewhere else.
+func runMove(c *context, args []string) error {
+	fs := flags("move")
+	from := fs.Int("from", 0, "the page to move")
+	to := fs.Int("to", 0, "where it should end up")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *from == 0 || *to == 0 {
+		return fmt.Errorf("expected -from <page> -to <page>, counting from 1")
+	}
+	if err := wantArgs(fs, 2, "-from <page> -to <page> <in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.Move(*from, *to); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+// runUnderlay draws another file BENEATH these pages, where overlay draws it
+// over. A watermark that belongs behind the text rather than across it is the
+// difference, and it is not a flag on overlay because "overlay -under" is a
+// sentence nobody should have to read.
+func runUnderlay(c *context, args []string) error {
+	fs := flags("underlay")
+	with := fs.String("with", "", "the file to draw underneath")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *with == "" {
+		return fmt.Errorf("expected -with <mark.pdf>")
+	}
+	if err := wantArgs(fs, 2, "-with <mark.pdf> <in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	mark, err := c.open(*with)
+	if err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.Underlay(mark); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+// runVersion sets the PDF version a document declares.
+func runVersion(c *context, args []string) error {
+	fs := flags("version")
+	set := fs.String("set", "", "the version to declare, such as 1.7")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *set == "" {
+		return fmt.Errorf("expected -set <version>")
+	}
+	if err := wantArgs(fs, 2, "-set <version> <in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	d.SetVersion(*set)
+	return save(d, fs.Arg(1))
 }
