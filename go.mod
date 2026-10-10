@@ -3,7 +3,7 @@ module github.com/go-pdfkit/ops
 go 1.27.1
 
 require (
-	github.com/go-gfx/gfx v0.34.1
+	github.com/go-gfx/gfx v0.35.0
 	github.com/go-pdfkit/extract v0.5.0
 	github.com/go-pdfkit/forms v0.5.0
 	github.com/go-pdfkit/reader v0.7.0
@@ -12,7 +12,7 @@ require (
 
 require (
 	github.com/ajroetker/go-highway v0.0.12 // indirect
-	github.com/go-images/jpeg2000 v0.13.2 // indirect
+	github.com/go-images/jpeg2000 v0.13.3 // indirect
 	github.com/go-opentype/fonts v0.10.0 // indirect
 	github.com/go-opentype/opentype v0.13.0 // indirect
 	github.com/go-pdfkit/pdffont v0.3.1 // indirect
