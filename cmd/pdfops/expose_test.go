@@ -489,3 +489,74 @@ func TestAnAttachmentNameIsStrippedToItsLastElement(t *testing.T) {
 		t.Error("a file was written OUTSIDE the directory that was asked for")
 	}
 }
+
+// duplex puts a fronts-then-backs scan back in reading order. ⛔ The assertion
+// is on the ORDER: a verb that wrote the right number of pages in the wrong
+// order is the entire defect, and a count cannot see it.
+//
+// fixture writes pages in order, so six pages read as a stack whose backs were
+// scanned flipped give 1, 6, 2, 5, 3, 4 — which is what this says, rather than
+// what a correctly-ordered scan would give. The fixture is a stack, not a
+// document; asserting "1 2 3 4 5 6" here would be asserting the fixture.
+func TestDuplex(t *testing.T) {
+	in := fixture(t, 6)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, msg := exec("duplex", in, out); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	if got := strings.Join(contentsOf(t, out), " "); got != "page 1 page 6 page 2 page 5 page 3 page 4" {
+		t.Errorf("came out as %q", got)
+	}
+}
+
+// ⛔ The DEFAULT reverses, because a stack is turned over as a stack. This
+// asserts the two give different documents, so neither can be passing by
+// standing in for the other.
+func TestDuplexKeepBacksIsNotTheDefault(t *testing.T) {
+	in := fixture(t, 6)
+	dir := t.TempDir()
+	def, keep := filepath.Join(dir, "d.pdf"), filepath.Join(dir, "k.pdf")
+	if code, _, msg := exec("duplex", in, def); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	if code, _, msg := exec("duplex", "-keep-backs", in, keep); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	a := strings.Join(contentsOf(t, def), " ")
+	b := strings.Join(contentsOf(t, keep), " ")
+	if a == b {
+		t.Fatalf("-keep-backs changed nothing: both gave %q", a)
+	}
+	if b != "page 1 page 4 page 2 page 5 page 3 page 6" {
+		t.Errorf("-keep-backs gave %q", b)
+	}
+}
+
+func TestDuplexSplitIsHonoured(t *testing.T) {
+	in := fixture(t, 6)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, msg := exec("duplex", "-split", "2", "-keep-backs", in, out); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	// Two fronts and four backs: the pairs collate and the rest follows.
+	if got := strings.Join(contentsOf(t, out), " "); got != "page 1 page 3 page 2 page 4 page 5 page 6" {
+		t.Errorf("came out as %q", got)
+	}
+}
+
+func TestDuplexRefusals(t *testing.T) {
+	in := fixture(t, 2)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, _ := exec("duplex", in); code != 1 {
+		t.Error("one argument was accepted")
+	}
+	if code, _, msg := exec("duplex", "-split", "9", in, out); code != 1 {
+		t.Errorf("a split past the end was accepted: %s", msg)
+	}
+	if code, _, _ := exec("duplex", "/no/such/file.pdf", out); code != 1 {
+		t.Error("a missing file was accepted")
+	}
+	if code, _, _ := exec("duplex", "-nonsense", in, out); code != 1 {
+		t.Error("an unknown flag was accepted")
+	}
+}

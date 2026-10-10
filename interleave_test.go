@@ -245,3 +245,115 @@ func TestWhatTheOtherDocumentsBringWithThem(t *testing.T) {
 		t.Error("the title was dropped on the way")
 	}
 }
+
+// ⛔ Every assertion here is on the ORDER. A duplex collation that produced
+// the right NUMBER of pages in the wrong order is the whole defect, and a
+// count cannot see it.
+func TestDuplexCollateWithTheBacksReversed(t *testing.T) {
+	// Six sheets' worth: the fronts in order, then the backs as a flipped
+	// stack leaves them — the last sheet's back first.
+	d := pagesNamed(t, "1", "3", "5", "6", "4", "2")
+	if err := d.DuplexCollate(3, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(written(t, d), " "); got != "1 2 3 4 5 6" {
+		t.Errorf("came out as %q", got)
+	}
+}
+
+func TestDuplexCollateWithTheBacksAlreadyInOrder(t *testing.T) {
+	d := pagesNamed(t, "1", "3", "5", "2", "4", "6")
+	if err := d.DuplexCollate(3, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(written(t, d), " "); got != "1 2 3 4 5 6" {
+		t.Errorf("came out as %q", got)
+	}
+}
+
+func TestDuplexCollateRefusesWhatMakesNoSense(t *testing.T) {
+	if err := pagesNamed(t).DuplexCollate(0, true); err == nil {
+		t.Error("an empty document was collated")
+	}
+	d := pagesNamed(t, "1", "2")
+	err := d.DuplexCollate(3, true)
+	if err == nil {
+		t.Fatal("a split past the end was accepted")
+	}
+	// The message says how many there are, because "cannot split at 3" over a
+	// file whose length the caller does not know is a riddle.
+	if msg := err.Error(); !strings.Contains(msg, "2 pages") {
+		t.Errorf("the refusal does not say how many pages there are: %q", msg)
+	}
+}
+
+// A split AT the end is not an error: it says "all fronts, no backs", which is
+// what a single-sided batch is, and handing back the document unchanged is the
+// honest answer.
+func TestDuplexCollateOfAllFrontsIsTheDocument(t *testing.T) {
+	d := pagesNamed(t, "1", "2", "3")
+	if err := d.DuplexCollate(3, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(written(t, d), " "); got != "1 2 3" {
+		t.Errorf("came out as %q", got)
+	}
+}
+
+// ⛔ The default split is ceil(n/2), NOT n/2, and this test had to be rewritten
+// to show it. The first version used a REVERSED back block — and with the backs
+// reversed the output is p0, p[n-1], p1, p[n-2] … whatever the split is, because
+// the reversal absorbs the difference. It passed at the ceiling AND at the
+// floor, so it proved nothing about the ceiling; the negative control below is
+// what said so.
+//
+// With the backs already in order the split is load-bearing: five pages are
+// three fronts and two backs, because an odd stack has its unpaired sheet at
+// the END of the fronts.
+func TestTheDefaultSplitTakesTheExtraSheetAsAFront(t *testing.T) {
+	d := pagesNamed(t, "1", "3", "5", "2", "4")
+	if err := d.DuplexCollate(0, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(written(t, d), " "); got != "1 2 3 4 5" {
+		t.Errorf("came out as %q", got)
+	}
+}
+
+// The negative control for the test above: the FLOOR of the same stack must
+// come out wrong, or the ceiling is not what makes it pass.
+func TestTheFloorOfAnOddStackIsNotTheDocument(t *testing.T) {
+	d := pagesNamed(t, "1", "3", "5", "2", "4")
+	if err := d.DuplexCollate(2, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(written(t, d), " "); got == "1 2 3 4 5" {
+		t.Error("splitting an odd stack at the floor gave the document, " +
+			"so the ceiling in the default is not what makes the test above pass")
+	}
+}
+
+// An odd stack with the backs reversed, which is the common scan — asserted for
+// what it is rather than as evidence about the split.
+func TestAnOddStackWithTheBacksReversed(t *testing.T) {
+	d := pagesNamed(t, "1", "3", "5", "4", "2")
+	if err := d.DuplexCollate(0, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(written(t, d), " "); got != "1 2 3 4 5" {
+		t.Errorf("came out as %q", got)
+	}
+}
+
+// ⛔ The reversal must not reorder the fronts underneath itself. fronts and
+// backs are two halves of ONE array, so reversing backs in place walks over
+// the fronts whenever the backs are the longer half.
+func TestReversingTheBacksLeavesTheFrontsAlone(t *testing.T) {
+	d := pagesNamed(t, "1", "6", "4", "2")
+	if err := d.DuplexCollate(1, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(written(t, d), " "); got != "1 2 4 6" {
+		t.Errorf("came out as %q", got)
+	}
+}
