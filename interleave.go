@@ -100,3 +100,56 @@ func (d *Doc) OnePage() error {
 	d.pages = []Page{{tiles: tiles, size: [2]float64{width, height}}}
 	return nil
 }
+
+// DuplexCollate puts a duplex stack back in reading order.
+//
+// An automatic feeder that cannot turn a sheet over leaves ONE file holding
+// two blocks: every front, then every back. This cuts it at split and
+// interleaves the two halves, so front1, back1, front2, back2 and on.
+//
+// A split of zero or less means the middle, rounded UP — ceil(n/2) — because
+// an odd stack has the unpaired sheet at the END of the fronts, not the start
+// of the backs. Thirteen pages split at seven, not six.
+//
+// ⛔ reverseBacks is not a convenience, it is the common case: the stack is
+// turned over AS A STACK, so the last sheet's back is scanned first. Without
+// it a thirty-sheet batch comes out with every back on the wrong front, which
+// is a defect that reads as "the scan is fine, the order is odd" rather than
+// as a reversal.
+//
+// Blocks of different sizes do not stop it: the pairs collate first and
+// whatever is left over follows in order, which is what the last single-sided
+// sheet of a batch leaves behind.
+func (d *Doc) DuplexCollate(split int, reverseBacks bool) error {
+	n := len(d.pages)
+	if n == 0 {
+		return fmt.Errorf("ops: an empty document has nothing to collate")
+	}
+	if split <= 0 {
+		split = (n + 1) / 2
+	}
+	if split > n {
+		return fmt.Errorf("ops: cannot split at %d: there are %d pages", split, n)
+	}
+	fronts, backs := d.pages[:split], d.pages[split:]
+	if reverseBacks {
+		// ⛔ A copy. Reversing in place would reorder d.pages underneath
+		// fronts, which shares the same array.
+		rev := make([]Page, len(backs))
+		for i, p := range backs {
+			rev[len(backs)-1-i] = p
+		}
+		backs = rev
+	}
+	out := make([]Page, 0, n)
+	for i := 0; i < len(fronts) || i < len(backs); i++ {
+		if i < len(fronts) {
+			out = append(out, fronts[i])
+		}
+		if i < len(backs) {
+			out = append(out, backs[i])
+		}
+	}
+	d.pages = out
+	return nil
+}

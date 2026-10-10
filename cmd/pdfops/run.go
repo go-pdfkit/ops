@@ -46,6 +46,7 @@ var commands = []command{
 	{"nup", "-n <count> <in.pdf> <out.pdf>", "lay several pages on each sheet", runNUp},
 	{"booklet", "<in.pdf> <out.pdf>", "order and lay out for saddle-stitch printing", runBooklet},
 	{"interleave", "<out.pdf> <in.pdf> <in.pdf> [in.pdf …]", "take one page from each in turn", runInterleave},
+	{"duplex", "[-split <n>] [-keep-backs] <in.pdf> <out.pdf>", "put a fronts-then-backs scan back in reading order", runDuplex},
 	{"onepage", "<in.pdf> <out.pdf>", "put every page onto a single page", runOnePage},
 	{"poster", "-across <n> -down <n> <in.pdf> <out.pdf>", "cut each page into tiles, to print larger than the paper", runPoster},
 	{"overlay", "-with <mark.pdf> <in.pdf> <out.pdf>", "draw another file over these pages", runOverlay},
@@ -1601,5 +1602,31 @@ func runVersion(c *context, args []string) error {
 		return err
 	}
 	d.SetVersion(*set)
+	return save(d, fs.Arg(1))
+}
+
+// runDuplex puts a fronts-then-backs scan back in reading order.
+func runDuplex(c *context, args []string) error {
+	fs := flags("duplex")
+	split := fs.Int("split", 0, "where the block of fronts ends; zero means the middle, rounded up")
+	// ⛔ The flag is -keep-backs rather than -reverse-backs, so that the
+	// DEFAULT is the common case. A stack is turned over as a stack, so the
+	// backs come out last-sheet-first; a tool whose default assumed otherwise
+	// would quietly put every back on the wrong front, and that reads as "the
+	// order is odd" rather than as a reversal.
+	keep := fs.Bool("keep-backs", false, "the backs are already in order; do not reverse them")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.DuplexCollate(*split, !*keep); err != nil {
+		return err
+	}
 	return save(d, fs.Arg(1))
 }

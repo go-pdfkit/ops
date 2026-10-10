@@ -42,6 +42,7 @@ pdfops reverse back-to-front.pdf right-way-round.pdf
 pdfops nup -n 4 slides.pdf handout.pdf
 pdfops booklet chapter.pdf to-fold.pdf
 pdfops interleave both.pdf fronts.pdf backs.pdf
+pdfops duplex     scan.pdf document.pdf
 pdfops onepage strip.pdf one-long-page.pdf
 pdfops poster -across 2 -down 2 plan.pdf tiles.pdf
 pdfops overlay -with letterhead.pdf plain.pdf headed.pdf
@@ -85,6 +86,26 @@ single-sided scans — the fronts and the backs — become one double-sided
 document. `onepage` stacks every page onto a single long one. `poster` cuts
 each page into tiles so a plan can be printed larger than the paper and
 assembled.
+
+
+`duplex` is the same job when the scanner left **one** file rather than two: a
+feeder that cannot turn a sheet over gives every front, then every back. It
+cuts the file in the middle and interleaves the halves.
+
+⛔ **The backs are reversed by default**, and the flag is `-keep-backs` rather
+than `-reverse-backs` so that the default is the common case: the stack is
+turned over *as a stack*, so the last sheet's back is scanned first. A tool
+whose default assumed otherwise would quietly put every back on the wrong
+front — which reads as *"the scan is fine, the order is odd"* rather than as a
+reversal.
+
+The default split is `ceil(n/2)`, **not** `n/2`: an odd stack has its unpaired
+sheet at the end of the **fronts**, so thirteen pages split at seven. ⛔ The
+test for that had to be rewritten. The first version used a reversed back
+block — and with the backs reversed the output is the same for any split in a
+range, because the reversal absorbs the difference. It passed at the ceiling
+**and at the floor**, so it proved nothing; the negative control is what said
+so, and the assertion now uses `-keep-backs`, where the split is load-bearing.
 
 `attachments` lists the files a document carries, and writes them out with
 `-to`. A name comes out of the document rather than from whoever runs the
