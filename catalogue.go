@@ -28,7 +28,40 @@ var documentKeys = []reader.Name{
 	"PageMode",          // whether to open with the bookmarks showing
 	"Metadata",          // the XMP packet
 	"Extensions",        // which extensions to the format the file uses
+
+	// ⛔ OutputIntents is the colour a print file DECLARES — the ICC profile a
+	// PDF/A or PDF/X names so that a press knows what its numbers mean. It was
+	// dropped until an audit of this list measured what the absence of each
+	// entry MEANS: no output intent is not "no opinion", it is "no colour
+	// management", and a prepress file that came back from a watermark with
+	// its profile gone would print differently with nothing to say why. It
+	// names a profile stream and no page, so it copies safely.
+	"OutputIntents",
+	// ⛔ URI is the BASE for the document's relative links. Without it,
+	// "../figures/one.png" resolves against wherever the viewer happens to
+	// think the document is, so dropping it does not remove a link — it
+	// silently points it somewhere else.
+	"URI",
 }
+
+// What is deliberately NOT carried, measured rather than assumed. An audit
+// built a document holding twenty-three catalogue entries, ran a watermark
+// over it, and asked of each one what its absence would MEAN:
+//
+//   - OpenAction and AA are what a document does when it is opened and when
+//     things happen to it. Dropping them is SAFER, and is what sanitize
+//     exists for; carrying them would carry code across a rebuild.
+//   - Legal and DSS belong to a signature, and a rewrite has already
+//     invalidated that signature the moment it changed a byte. Carrying the
+//     validation data of a signature that no longer verifies would say the
+//     document is still attested when it is not.
+//   - Threads and Collection point INTO the document — at pages, and at
+//     embedded files — which is why /Names /Dests is not carried either.
+//
+// ⛔ And three the audit reported as lost that are NOT: AcroForm, Outlines and
+// StructTreeRoot are all carried, and the audit's fixture held an EMPTY one of
+// each — which is deliberately not written. A measured absence has to be read
+// before it is believed.
 
 // sensitiveKeys are entries a sanitised file does not keep: the XMP packet
 // says who wrote the document, on what machine, and when.
