@@ -101,6 +101,17 @@ func (d *Doc) Bytes() ([]byte, error) {
 	if labels := d.writePageLabels(w); labels != nil {
 		catalog["PageLabels"] = labels
 	}
+	// ⛔ Optional content is CONSTRUCTED rather than carried with the other
+	// document keys, for the same reason and a worse consequence. Measured
+	// before this: a one-page drawing with a layer switched OFF, run through
+	// `pdfops watermark`, came back with no /OCProperties at all — the content
+	// still marked as belonging to a layer, the layer object still reachable
+	// through the page's own resources, and NOTHING left saying which layer
+	// was hidden. So the hidden layer showed. A drawing distributed with an
+	// "internal pricing" layer turned off revealed it to any verb at all.
+	if layers := d.writeLayers(w); layers != nil {
+		catalog["OCProperties"] = layers
+	}
 	trailer := reader.Dict{"Root": w.Add(catalog)}
 	if len(d.info) > 0 {
 		trailer["Info"] = w.Add(d.info)

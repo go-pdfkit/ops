@@ -39,6 +39,12 @@ type Doc struct {
 	labels    []string
 	labelsSet bool
 
+	// layerEdits are changes to the optional content, held until the file is
+	// written. They are kept as EDITS rather than as a resolved layer list
+	// because the layers of the result are the union of every source's, and
+	// that union does not exist until the pages are known to be final.
+	layerEdits []layerEdit
+
 	// attached are files to put inside the document, and dropped are the names
 	// of files it came in with that are not to go back out. A file the source
 	// carried is kept by being copied at write time rather than held here, so

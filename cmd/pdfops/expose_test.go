@@ -1020,3 +1020,184 @@ func TestLabelsListOfADocumentWithNone(t *testing.T) {
 		t.Errorf("code %d, said %q", code, said)
 	}
 }
+
+// layeredFixture writes a one-page document with two layers, the second
+// hidden, each with content marked as drawing on it.
+func layeredFixture(t *testing.T) string {
+	t.Helper()
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	a := w.Add(reader.Dict{"Type": reader.Name("OCG"), "Name": reader.String("Markup")})
+	b := w.Add(reader.Dict{"Type": reader.Name("OCG"), "Name": reader.String("Prices")})
+	stream := w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte(
+		"/OC /MC0 BDC\n1 0 0 RG 1 1 5 5 re S\nEMC\n/OC /MC1 BDC\n2 2 5 5 re S\nEMC\n")})
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"Contents": stream,
+		"MediaBox": reader.Array{reader.Integer(0), reader.Integer(0),
+			reader.Integer(100), reader.Integer(200)},
+		"Resources": reader.Dict{"Properties": reader.Dict{"MC0": a, "MC1": b}}})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef,
+		"OCProperties": reader.Dict{"OCGs": reader.Array{a, b},
+			"D": reader.Dict{"Order": reader.Array{a, b},
+				"ON": reader.Array{a}, "OFF": reader.Array{b}}},
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "layered.pdf")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLayersList(t *testing.T) {
+	code, said, msg := exec("layers", "-list", layeredFixture(t))
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	// ⛔ The STATE and the name, both: the use of this tool is finding the
+	// layer that is off, so printing only the names would hide it.
+	if !strings.Contains(said, "on") || !strings.Contains(said, "Markup") {
+		t.Errorf("said %q", said)
+	}
+	if !strings.Contains(said, "off") || !strings.Contains(said, "Prices") {
+		t.Errorf("the hidden layer is not reported as off:\n%s", said)
+	}
+}
+
+// ⛔⛔ THE WITNESS, through the command: a hidden layer must still be hidden
+// after any verb at all. Before this change `pdfops watermark` lost the
+// optional content entirely and the hidden layer showed.
+func TestAHiddenLayerSurvivesAVerbThroughTheCommand(t *testing.T) {
+	in := layeredFixture(t)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, msg := exec("watermark", "-text", "DRAFT", in, out); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	code, said, _ := exec("layers", "-list", out)
+	if code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	if !strings.Contains(said, "Prices") {
+		t.Errorf("the hidden layer is gone after a watermark:\n%s", said)
+	}
+	if !strings.Contains(said, "off") {
+		t.Errorf("the hidden layer came back VISIBLE after a watermark:\n%s", said)
+	}
+}
+
+func TestLayersShowHideAddDrop(t *testing.T) {
+	in := layeredFixture(t)
+	dir := t.TempDir()
+	out := filepath.Join(dir, "out.pdf")
+	if code, _, msg := exec("layers", "-show", "Prices", "-hide", "Markup",
+		"-add", "Notes", in, out); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	_, said, _ := exec("layers", "-list", out)
+	for _, want := range []string{"Notes", "Prices", "Markup"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("missing %q:\n%s", want, said)
+		}
+	}
+	// A child, by PARENT/NAME.
+	child := filepath.Join(dir, "child.pdf")
+	if code, _, msg := exec("layers", "-add", "Markup/Mine", in, child); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	_, said, _ = exec("layers", "-list", child)
+	if !strings.Contains(said, "  on         Mine") {
+		t.Errorf("the child is not shown nested:\n%s", said)
+	}
+	// Dropping a visible layer.
+	dropped := filepath.Join(dir, "dropped.pdf")
+	if code, _, msg := exec("layers", "-drop", "Markup", in, dropped); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	_, said, _ = exec("layers", "-list", dropped)
+	if strings.Contains(said, "Markup") {
+		t.Errorf("the layer was not dropped:\n%s", said)
+	}
+}
+
+func TestLayersRefusals(t *testing.T) {
+	in := layeredFixture(t)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, _ := exec("layers", "-show", "Markup", in); code != 1 {
+		t.Error("no output file was accepted")
+	}
+	if code, _, _ := exec("layers", "-list", in, out); code != 1 {
+		t.Error("-list accepted an output file")
+	}
+	if code, _, _ := exec("layers", in, out); code != 1 {
+		t.Error("neither -list nor a change was accepted")
+	}
+	if code, _, _ := exec("layers", "-list", "-show", "Markup", in); code != 1 {
+		t.Error("-list with a change was accepted")
+	}
+	// ⛔ Dropping a HIDDEN layer is refused: its content stays and stops being
+	// optional, so the hidden drawing becomes permanently visible.
+	if code, _, said := exec("layers", "-drop", "Prices", in, out); code != 1 {
+		t.Errorf("a hidden layer was dropped: %s", said)
+	}
+	for _, args := range [][]string{
+		{"layers", "-show", "no such layer", in, out},
+		{"layers", "-hide", "no such layer", in, out},
+		{"layers", "-drop", "no such layer", in, out},
+		{"layers", "-add", "x/y", in, out},
+		{"layers", "-add", "", in, out},
+		{"layers", "-nonsense", in, out},
+		{"layers", "-show", "Markup", "/no/such/file.pdf", out},
+		{"layers", "-list", "/no/such/file.pdf"},
+		{"layers", "-show", "Markup", in, "/no/such/dir/out.pdf"},
+	} {
+		if code, _, _ := exec(args...); code != 1 {
+			t.Errorf("%v was accepted", args[1:])
+		}
+	}
+}
+
+func TestLayersListOfADocumentWithNone(t *testing.T) {
+	code, said, _ := exec("layers", "-list", fixture(t, 1))
+	if code != 0 || !strings.Contains(said, "no layers") {
+		t.Errorf("code %d, said %q", code, said)
+	}
+}
+
+// A locked layer cannot be switched, and the command says so.
+func TestLayersRefusesALockedOne(t *testing.T) {
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	grid := w.Add(reader.Dict{"Type": reader.Name("OCG"), "Name": reader.String("Grid")})
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox": reader.Array{reader.Integer(0), reader.Integer(0),
+			reader.Integer(10), reader.Integer(10)},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte{}})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef,
+		"OCProperties": reader.Dict{"OCGs": reader.Array{grid},
+			"D": reader.Dict{"Order": reader.Array{grid}, "ON": reader.Array{grid},
+				"Locked": reader.Array{grid}}},
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "locked.pdf")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, said, _ := exec("layers", "-list", path)
+	if code != 0 || !strings.Contains(said, "locked") {
+		t.Errorf("-list does not report the lock: %q", said)
+	}
+	if code, _, _ := exec("layers", "-hide", "Grid", path,
+		filepath.Join(t.TempDir(), "x.pdf")); code != 1 {
+		t.Error("a locked layer was switched")
+	}
+}
