@@ -61,6 +61,7 @@ var commands = []command{
 	{"info", "<in.pdf>", "print what the file says about itself", runInfo},
 	{"metadata", "(-set <Key=value> … | -clear) <in.pdf> <out.pdf>", "write what the file says about itself", runMetadata},
 	{"version", "-set <version> <in.pdf> <out.pdf>", "set the PDF version the file declares", runVersion},
+	{"repair", "[-check] <in.pdf> [out.pdf]", "rebuild a file whose structure is damaged, and say whether it was", runRepair},
 	{"strip", "[-annotations] [-bookmarks] <in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
 	{"sanitize", "<in.pdf> <out.pdf>", "remove what runs rather than shows: scripts, launching, embedded files", runSanitize},
 	{"outline", "(-drop | -from <toc.txt>) <in.pdf> <out.pdf>", "replace or remove the bookmarks", runOutline},
@@ -1721,4 +1722,47 @@ func runDeblank(c *context, args []string) error {
 	}
 	fmt.Fprintln(c.out, "dropped", len(went), "page(s):", went)
 	return nil
+}
+
+// runRepair writes a file back out with its structure rebuilt, and says
+// whether rebuilding was needed.
+//
+// ⛔ The rebuilding is not this verb's doing: go-pdfkit/reader repairs a
+// damaged file on its own, quietly, which is the right behaviour for a reader
+// — a caller asking for page three wants page three. What was missing was a
+// way to SAY it happened and to keep the result, which is the whole of this
+// verb. It is also why -check exists: the question "is this file damaged" has
+// an answer that is worth having without writing anything.
+func runRepair(c *context, args []string) error {
+	fs := flags("repair")
+	check := fs.Bool("check", false, "say whether the file needed rebuilding and write nothing")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	want, usage := 2, "<in.pdf> <out.pdf>"
+	if *check {
+		want, usage = 1, "<in.pdf>"
+	}
+	if err := wantArgs(fs, want, usage); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if !d.Repaired() {
+		// ⛔ Said out loud, and not an error. A file that did not need
+		// repairing is the good case, and reporting it as a failure would
+		// make "repair everything in this directory" impossible to script.
+		fmt.Fprintln(c.out, "nothing needed rebuilding")
+		if *check {
+			return nil
+		}
+		return save(d, fs.Arg(1))
+	}
+	fmt.Fprintln(c.out, "the structure was rebuilt to read it")
+	if *check {
+		return nil
+	}
+	return save(d, fs.Arg(1))
 }
