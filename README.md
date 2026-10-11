@@ -265,6 +265,49 @@ entry, not three hundred. A label no style can explain becomes a run of one with
 the whole label as a literal prefix — the file then says exactly what the viewer
 must show, at the cost of an entry.
 
+
+`layers` is the optional content a viewer calls layers: a drawing's
+dimensions, its markup, its alternatives.
+
+```sh
+pdfops layers -list plan.pdf
+pdfops layers -hide 'Internal pricing' plan.pdf out.pdf
+pdfops layers -add 'Markup/Mine' plan.pdf out.pdf
+```
+
+⛔ **Every verb used to lose them.** Measured before this: a one-page drawing
+with a layer switched **off**, run through `pdfops watermark`, came back with
+no `/OCProperties` at all — the content still *marked* as belonging to a layer,
+the layer object still reachable through the page's own resources, and nothing
+left saying which layer was hidden. **So the hidden layer showed.** A drawing
+distributed with an "internal pricing" layer turned off revealed it to any verb
+at all.
+
+The layers are now constructed on the way out rather than carried, which is
+what lets them survive a reorder *and* a merge: `keepCatalogue` refuses to
+merge two catalogues, because two forms whose fields are named the same cannot
+honestly become one — but two drawings' layers can, since a layer is its object
+and two layers named "Markup" are two layers.
+
+### What the file says about its own layers, and is obeyed
+
+| | |
+| --- | --- |
+| `/BaseState OFF` | inverts the question: everything is hidden unless `/ON` names it. A reader that only looked at `/OFF` would report every layer of such a document as visible — and a drawing that ships with all its layers off but one is exactly how an alternatives document is built |
+| `/Locked` | the document asking that a layer not be switched. `-hide` on one is **refused**: a drawing's dimension layer is what everything else is positioned against, and switching it anyway ignores the only thing the file says |
+| `/D /Order` | the nesting, which is written back nested. A string inside it is the **group's label** rather than a layer |
+
+⛔ **Dropping a hidden layer is refused**, because what was drawn on it does not
+go with it: the content stays in the page and stops being optional, so the
+hidden drawing becomes permanently **visible** — the opposite of what somebody
+deleting a layer called "internal pricing" expects. Show it first if that is
+what you mean.
+
+⛔ **A name is not an identifier.** A drawing assembled from two others often
+has two "Markup" layers, and switching one of them at random is a change
+nobody asked for and nobody can see, so an ambiguous name is refused with the
+count.
+
 `attachments` lists the files a document carries, and writes them out with
 `-to`. A name comes out of the document rather than from whoever runs the
 command, so it is stripped to its last element: `../escaped.txt` is written

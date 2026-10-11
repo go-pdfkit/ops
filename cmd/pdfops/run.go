@@ -62,6 +62,7 @@ var commands = []command{
 	{"metadata", "(-set <Key=value> … | -clear) <in.pdf> <out.pdf>", "write what the file says about itself", runMetadata},
 	{"version", "-set <version> <in.pdf> <out.pdf>", "set the PDF version the file declares", runVersion},
 	{"repair", "[-check] <in.pdf> [out.pdf]", "rebuild a file whose structure is damaged, and say whether it was", runRepair},
+	{"layers", "(-list | -show <name> | -hide <name> | -add <name> | -drop <name>) <in.pdf> [out.pdf]", "the optional content a viewer calls layers", runLayers},
 	{"labels", "(-list | -clear | -rule <spec> …) <in.pdf> [out.pdf]", "set what a viewer shows in its toolbar: i, ii, iii then 1, 2, 3", runLabels},
 	{"strip", "[-annotations] [-bookmarks] <in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
 	{"sanitize", "<in.pdf> <out.pdf>", "remove what runs rather than shows: scripts, launching, embedded files", runSanitize},
@@ -1857,4 +1858,82 @@ func parseLabelRule(spec string) (ops.LabelRule, error) {
 		}
 	}
 	return r, nil
+}
+
+// runLayers lists or changes a document's optional content.
+func runLayers(c *context, args []string) error {
+	fs := flags("layers")
+	list := fs.Bool("list", false, "say what layers there are and write nothing")
+	var showNames, hideNames, addNames, dropNames stringList
+	fs.Var(&showNames, "show", "turn a layer on (repeatable)")
+	fs.Var(&hideNames, "hide", "turn a layer off (repeatable)")
+	fs.Var(&addNames, "add", "add an empty layer, as NAME or PARENT/NAME (repeatable)")
+	fs.Var(&dropNames, "drop", "remove a layer (repeatable)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	changes := len(showNames) + len(hideNames) + len(addNames) + len(dropNames)
+	want, usage := 2, "<in.pdf> <out.pdf>"
+	if *list {
+		want, usage = 1, "<in.pdf>"
+	}
+	if err := wantArgs(fs, want, usage); err != nil {
+		return err
+	}
+	if *list == (changes > 0) {
+		return fmt.Errorf("say either -list or one or more of -show, -hide, -add and -drop")
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if *list {
+		layers := d.Layers()
+		if len(layers) == 0 {
+			fmt.Fprintln(c.out, "no layers")
+			return nil
+		}
+		for _, l := range layers {
+			state := "on "
+			if !l.Visible {
+				state = "off"
+			}
+			if l.Locked {
+				state += " locked"
+			}
+			// ⛔ The nesting is shown, because a panel of forty layers is
+			// unreadable flat and the hierarchy is what a drawing program
+			// put there.
+			fmt.Fprintf(c.out, "%s%-10s %s\n", strings.Repeat("  ", l.Depth), state, l.Name)
+		}
+		return nil
+	}
+	for _, name := range showNames {
+		if err := d.SetLayerVisible(name, true); err != nil {
+			return err
+		}
+	}
+	for _, name := range hideNames {
+		if err := d.SetLayerVisible(name, false); err != nil {
+			return err
+		}
+	}
+	for _, spec := range addNames {
+		// ⛔ PARENT/NAME, with the slash chosen because a layer name may hold
+		// almost anything else — a colon, a comma, a space — and a separator
+		// a drawing program can put in a name is not a separator.
+		parent, name := "", spec
+		if before, after, found := strings.Cut(spec, "/"); found {
+			parent, name = before, after
+		}
+		if err := d.AddLayer(name, parent); err != nil {
+			return err
+		}
+	}
+	for _, name := range dropNames {
+		if err := d.DropLayer(name); err != nil {
+			return err
+		}
+	}
+	return save(d, fs.Arg(1))
 }
