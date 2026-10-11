@@ -1201,3 +1201,160 @@ func TestLayersRefusesALockedOne(t *testing.T) {
 		t.Error("a locked layer was switched")
 	}
 }
+
+// textFixture writes a one-page document whose text sets its own colour, with
+// a rectangle beside it that must keep its own.
+func textFixture(t *testing.T) string {
+	t.Helper()
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	body := "1 0 0 rg 5 5 10 10 re f\nBT /F1 12 Tf 1 0 0 rg (words) Tj ET\n"
+	kids := reader.Array{w.Add(reader.Dict{
+		"Type": reader.Name("Page"), "Parent": pagesRef,
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte(body)}),
+	})}
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"), "Kids": kids,
+		"Count": reader.Integer(1),
+		"MediaBox": reader.Array{reader.Integer(0), reader.Integer(0),
+			reader.Integer(100), reader.Integer(200)}})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "text.pdf")
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestTextColour(t *testing.T) {
+	in := textFixture(t)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, msg := exec("textcolour", "-to", "#0000ff", in, out); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	got := contentsOf(t, out)[0]
+	if !strings.Contains(got, "0 0 1 rg") {
+		t.Errorf("the text is not blue:\n%s", got)
+	}
+	// ⛔ The rectangle keeps its own red: exactly one red fill survives.
+	if n := strings.Count(got, "1 0 0 rg"); n != 1 {
+		t.Errorf("%d red fills, want the rectangle's one:\n%s", n, got)
+	}
+}
+
+// ⛔ #f00 is FULL red, 255 and not 240. Each digit is doubled, not shifted —
+// a shift gives 240/255 for what every browser and design tool calls #f00,
+// and a logo recoloured to 94% red is a defect nobody can see but a printer.
+func TestAShortHexIsDoubledAndNotShifted(t *testing.T) {
+	r, g, b, err := parseColour("#f00")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r != 1 || g != 0 || b != 0 {
+		t.Errorf("#f00 = %v %v %v, want 1 0 0", r, g, b)
+	}
+	// And the long form agrees with the short one, which is the property that
+	// makes the doubling right rather than merely different.
+	lr, lg, lb, err := parseColour("#ff0000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r != lr || g != lg || b != lb {
+		t.Errorf("#f00 = %v %v %v but #ff0000 = %v %v %v", r, g, b, lr, lg, lb)
+	}
+	// A shift would give this instead, and the test says the number out loud
+	// so that nobody has to work out which is which.
+	if r == 240.0/255 {
+		t.Error("#f00 came out as 240/255, which is the shift and not the doubling")
+	}
+}
+
+func TestParseColour(t *testing.T) {
+	for s, want := range map[string][3]float64{
+		"black": {0, 0, 0}, "white": {1, 1, 1}, "RED": {1, 0, 0},
+		"green": {0, 1, 0}, "blue": {0, 0, 1},
+		"#000": {0, 0, 0}, "#fff": {1, 1, 1},
+		"#808080": {128.0 / 255, 128.0 / 255, 128.0 / 255},
+		"0000ff":  {0, 0, 1},
+	} {
+		r, g, b, err := parseColour(s)
+		if err != nil {
+			t.Errorf("%q: %v", s, err)
+			continue
+		}
+		if [3]float64{r, g, b} != want {
+			t.Errorf("parseColour(%q) = %v %v %v, want %v", s, r, g, b, want)
+		}
+	}
+	for _, s := range []string{"", "#", "#ff", "#ggg", "#gggggg", "#1234567", "puce"} {
+		if _, _, _, err := parseColour(s); err == nil {
+			t.Errorf("parseColour(%q) was accepted", s)
+		}
+	}
+}
+
+// ⛔ What could not be reached is SAID. A document whose text is all inside a
+// Form XObject would otherwise come back looking converted and be unchanged —
+// the one failure a caller cannot see by opening the result and glancing at it.
+func TestTextColourSaysWhatItCouldNotReach(t *testing.T) {
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	form := w.Add(&reader.Stream{
+		Dict: reader.Dict{"Type": reader.Name("XObject"), "Subtype": reader.Name("Form"),
+			"BBox": reader.Array{reader.Integer(0), reader.Integer(0),
+				reader.Integer(10), reader.Integer(10)}},
+		Raw: []byte("BT (inside) Tj ET")})
+	kids := reader.Array{w.Add(reader.Dict{
+		"Type": reader.Name("Page"), "Parent": pagesRef,
+		"Resources": reader.Dict{"XObject": reader.Dict{"Fm0": form}},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{},
+			Raw: []byte("q /Fm0 Do Q BT (outside) Tj ET")})})}
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"), "Kids": kids,
+		"Count": reader.Integer(1),
+		"MediaBox": reader.Array{reader.Integer(0), reader.Integer(0),
+			reader.Integer(100), reader.Integer(100)}})
+	src, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "form.pdf")
+	if err := os.WriteFile(path, src, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	code, said, msg := exec("textcolour", "-to", "blue", path, out)
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	if !strings.Contains(said, "not recoloured") {
+		t.Errorf("it did not say what it could not reach: %q", said)
+	}
+	// And a document with nothing unreachable says nothing.
+	plain := filepath.Join(t.TempDir(), "plain.pdf")
+	if code, said, _ := exec("textcolour", "-to", "blue", textFixture(t), plain); code != 0 ||
+		strings.Contains(said, "not recoloured") {
+		t.Errorf("a plain document said %q", said)
+	}
+}
+
+func TestTextColourRefusals(t *testing.T) {
+	in := textFixture(t)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	for _, args := range [][]string{
+		{"textcolour", in, out},
+		{"textcolour", "-to", "blue", in},
+		{"textcolour", "-to", "puce", in, out},
+		{"textcolour", "-to", "blue", "-pages", "nonsense", in, out},
+		{"textcolour", "-to", "blue", "/no/such/file.pdf", out},
+		{"textcolour", "-to", "blue", in, "/no/such/dir/out.pdf"},
+		{"textcolour", "-nonsense", in, out},
+	} {
+		if code, _, _ := exec(args...); code != 1 {
+			t.Errorf("%v was accepted", args[1:])
+		}
+	}
+}

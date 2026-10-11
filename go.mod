@@ -6,7 +6,7 @@ require (
 	github.com/go-gfx/gfx v0.34.1
 	github.com/go-pdfkit/extract v0.5.0
 	github.com/go-pdfkit/forms v0.5.0
-	github.com/go-pdfkit/reader v0.7.0
+	github.com/go-pdfkit/reader v0.8.0
 	github.com/go-pdfkit/xfa v0.22.0
 )
 

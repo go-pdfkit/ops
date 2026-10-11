@@ -308,6 +308,52 @@ has two "Markup" layers, and switching one of them at random is a change
 nobody asked for and nobody can see, so an ambiguous name is refused with the
 count.
 
+`textcolour` paints the text one colour and leaves the rest of the page alone.
+
+```sh
+pdfops textcolour -to '#0000ff' report.pdf blue-text.pdf
+pdfops textcolour -to black -pages 1-4 scan.pdf fixed.pdf
+```
+
+⛔ **Setting a colour before each text object is not enough**, and that is what
+the first draft did. A text object that sets its *own* colour overrides it, so
+a page whose paragraphs say `1 0 0 rg` came out unchanged while the tool
+reported success. Every colour operator **inside** a text object is blanked —
+`g`, `rg`, `k`, `cs`, `sc`, `scn` and their stroking capitals — so the colour
+asked for is the one that paints.
+
+⛔ **The colour goes outside the text object, wrapped in `q`/`Q`.** A text
+object does not save the graphics state, so a colour set inside one leaks into
+whatever is drawn after it — which is how a recolouring turns a company's logo
+the same shade as its paragraphs. A test asserts the rectangle beside the text
+keeps its own red.
+
+Both the filling **and** the stroking colour are set, because text has render
+modes: 0 fills, 1 strokes, 2 does both.
+
+⛔ **It splices, and does not re-serialise.** Writing the operations back out
+would mean formatting every operand again, including an inline image's
+still-encoded bytes, where a formatter that is merely lossless-for-objects can
+change what the image *means*. So the rewriting keeps every byte it does not
+deliberately change — which is why
+[`reader.Operation`](https://github.com/go-pdfkit/reader) carries its byte
+range, added for this. A stream with no text comes back **byte for byte**
+unchanged, and the colour operators are **blanked with spaces** rather than
+deleted so that every offset after one is still the offset the scan reported.
+
+⛔ **What it cannot reach, it counts.** Text drawn through a Form XObject is
+not recoloured, and the reason is not difficulty: an XObject is **shared**, so
+recolouring one would change pages the caller did not name. A document whose
+text is all inside XObjects would otherwise come back looking converted and be
+unchanged — the one failure a caller cannot see by opening the result and
+glancing at it. So the count is said out loud, and `Doc.UnreachedText` is the
+same answer in Go.
+
+And `#f00` is **full** red: each digit of a short hex colour is doubled, not
+shifted, so the component is `0xf × 17`. A shift gives 240/255 for what every
+browser calls full red, and a logo recoloured to 94 % red is a defect nobody
+can see but a printer.
+
 `attachments` lists the files a document carries, and writes them out with
 `-to`. A name comes out of the document rather than from whoever runs the
 command, so it is stripped to its last element: `../escaped.txt` is written

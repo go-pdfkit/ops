@@ -18,6 +18,8 @@ github.com/go-pdfkit/pdffont v0.3.1 h1:+K7opHGRERDZ5EMkA12s1GT48t8GpncArhnyzyc5b
 github.com/go-pdfkit/pdffont v0.3.1/go.mod h1:eFJ/7t9AvcX76KY5qNJMMKetz8hUUUdVM1qSWLi3S1g=
 github.com/go-pdfkit/reader v0.7.0 h1:+Fz5i8Zq6beBpTc3pNTbJ3Qf14aroA5txgeVzVGLTSY=
 github.com/go-pdfkit/reader v0.7.0/go.mod h1:EYHHREPKT/orDzlGiFPnPVPPuaRDLiAYezIr0cCFXaA=
+github.com/go-pdfkit/reader v0.8.0 h1:vLxnOlGJjFV0un7chvTft559neLl6jmW4xrEXub4Y38=
+github.com/go-pdfkit/reader v0.8.0/go.mod h1:EYHHREPKT/orDzlGiFPnPVPPuaRDLiAYezIr0cCFXaA=
 github.com/go-pdfkit/render v0.67.2 h1:oBIFoROjorKednM/8Xz9Dhf9VArkFFaL4jZpCEcI72M=
 github.com/go-pdfkit/render v0.67.2/go.mod h1:S+p47RMo1vUykzxC+5YMzvQ8hjHBVX6HoHIAyJlzmp4=
 github.com/go-pdfkit/xfa v0.22.0 h1:IbdMcNYN40kataz/n+3pkz2METftMh+re/MkcY2eCbw=
