@@ -431,3 +431,98 @@ func withAnnots(t *testing.T, src []byte) []byte {
 	}
 	return out
 }
+
+// ⛔ The colour a print file DECLARES, carried across a rewrite. Measured
+// before this: a document naming an ICC profile came back from a watermark
+// with no /OutputIntents at all — and no output intent is not "no opinion",
+// it is "no colour management", so the file would print differently with
+// nothing to say why.
+//
+// The assertion reaches the PROFILE and not just the array, because an
+// /OutputIntents whose /DestOutputProfile went with the rebuild declares a
+// colour space it cannot supply.
+func TestTheOutputIntentSurvivesARewrite(t *testing.T) {
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	profile := w.Add(&reader.Stream{
+		Dict: reader.Dict{"N": reader.Integer(3)},
+		Raw:  []byte("not really an ICC profile, but a stream"),
+	})
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox": reader.Array{reader.Integer(0), reader.Integer(0),
+			reader.Integer(100), reader.Integer(100)},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte{}})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	src, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef,
+		"OutputIntents": reader.Array{reader.Dict{
+			"Type":                      reader.Name("OutputIntent"),
+			"S":                         reader.Name("GTS_PDFA1"),
+			"OutputConditionIdentifier": reader.String("sRGB IEC61966-2.1"),
+			"DestOutputProfile":         profile,
+		}},
+		"URI": reader.Dict{"Base": reader.String("https://example.com/paper/")},
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Watermark("all", "DRAFT"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := d.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := reader.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := back.Catalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	intents, err := back.Resolve(catalog["OutputIntents"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	arr, ok := intents.(reader.Array)
+	if !ok || len(arr) != 1 {
+		t.Fatalf("OutputIntents = %#v, want an array of one", intents)
+	}
+	intent, err := back.Resolve(arr[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	dict, ok := intent.(reader.Dict)
+	if !ok {
+		t.Fatalf("the intent is %#v", intent)
+	}
+	if got, _ := back.Resolve(dict["OutputConditionIdentifier"]); string(got.(reader.String)) != "sRGB IEC61966-2.1" {
+		t.Errorf("the condition is %#v", got)
+	}
+	// ⛔ The profile itself, which is the whole point: an intent that names a
+	// profile the file no longer holds declares a colour space it cannot
+	// supply.
+	prof, err := back.Resolve(dict["DestOutputProfile"])
+	if err != nil {
+		t.Fatalf("the profile: %v", err)
+	}
+	if _, ok := prof.(*reader.Stream); !ok {
+		t.Errorf("the profile is %#v, want a stream", prof)
+	}
+	// And the base URI, whose absence points relative links elsewhere rather
+	// than removing them.
+	uri, _ := back.Resolve(catalog["URI"])
+	udict, ok := uri.(reader.Dict)
+	if !ok {
+		t.Fatalf("URI = %#v", uri)
+	}
+	if got, _ := back.Resolve(udict["Base"]); string(got.(reader.String)) != "https://example.com/paper/" {
+		t.Errorf("the base URI is %#v", got)
+	}
+}

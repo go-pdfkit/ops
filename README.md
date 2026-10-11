@@ -400,6 +400,44 @@ Helvetica-Bold, Courier and Courier-Bold — so nothing is embedded and a
 watermark costs about a kilobyte. Stamp text may say `{page}`, `{pages}`
 and `{n}`, the last being a counter for serial numbering.
 
+
+## ⛔ What a rewrite carries, audited rather than assumed
+
+Twice in one afternoon this package was found to be **dropping** a catalogue
+entry whose absence is not "no opinion" but a **default** — so the loss changed
+the document silently. So the whole list was measured: a document holding
+twenty-three catalogue entries, a watermark over it, and of each entry the
+question *what would its absence MEAN?*
+
+| | |
+| --- | --- |
+| **`/PageLabels`** | the viewer numbers pages by position — a book's front matter came back 1, 2, 3 instead of i, ii, iii |
+| **`/OCProperties`** | everything optional becomes **visible** — a hidden layer was revealed |
+| **`/OutputIntents`** | **no colour management**: a prepress file lost the ICC profile it declares, and would print differently with nothing to say why |
+| **`/URI`** | relative links resolve against wherever the viewer thinks the document is — the link is not removed, it is silently pointed elsewhere |
+
+All four are carried now, the first two **rebuilt** (they cannot be copied: one
+is keyed by page index, the other names objects the content reaches another
+way) and the last two copied.
+
+### What is deliberately not carried, and why
+
+- **`/OpenAction`, `/AA`** — what the document does when it is opened. Dropping
+  them is *safer*, and is what `sanitize` exists for: carrying them would carry
+  **code** across a rebuild;
+- **`/Legal`, `/DSS`** — a signature's attestation and its validation data. A
+  rewrite has already invalidated the signature the moment it changed a byte,
+  and carrying the validation data of a signature that no longer verifies would
+  say the document is still attested when it is not;
+- **`/Threads`, `/Collection`** — these point *into* the document, at pages and
+  at embedded files, which is why `/Names /Dests` is not carried either.
+
+⛔ And **three the audit reported as lost that are not**: `/AcroForm`,
+`/Outlines` and `/StructTreeRoot` are all carried. The audit's fixture held an
+**empty** one of each, and an empty form, outline or structure tree is
+deliberately not written. *A measured absence has to be read before it is
+believed* — which is the other half of why an audit is worth running.
+
 ## Verified against real files
 
 Every operation is checked on the same corpus of **118 863 real PDFs** the
