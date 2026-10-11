@@ -50,6 +50,7 @@ var commands = []command{
 	{"onepage", "<in.pdf> <out.pdf>", "put every page onto a single page", runOnePage},
 	{"poster", "-across <n> -down <n> <in.pdf> <out.pdf>", "cut each page into tiles, to print larger than the paper", runPoster},
 	{"divide", "-across <n> -down <n> <in.pdf> <out.pdf>", "cut each page into smaller pages of its own content", runDivide},
+	{"deblank", "[-max-ink <fraction>] [-dpi <n>] [-list] <in.pdf> [out.pdf]", "find the pages that hold nothing, and drop them", runDeblank},
 	{"overlay", "-with <mark.pdf> <in.pdf> <out.pdf>", "draw another file over these pages", runOverlay},
 	{"underlay", "-with <mark.pdf> <in.pdf> <out.pdf>", "draw another file beneath these pages", runUnderlay},
 	{"blank", "-before <page> <in.pdf> <out.pdf>", "insert an empty page", runBlank},
@@ -1657,4 +1658,67 @@ func runDivide(c *context, args []string) error {
 		return err
 	}
 	return save(d, fs.Arg(1))
+}
+
+// runDeblank finds the pages that hold nothing and drops them.
+//
+// ⛔ -list takes no output file and writes nothing, because the first thing
+// anybody should do with a tool that deletes pages is ask it which ones it
+// means. BentoPDF's own version of this makes the caller confirm; a command
+// cannot ask, so it offers the dry run instead.
+func runDeblank(c *context, args []string) error {
+	fs := flags("deblank")
+	dpi := fs.Float64("dpi", 0, "how finely to draw each page; 0 means 150")
+	maxInk := fs.Float64("max-ink", 0, "fraction of a page that may be ink and still count as blank; 0 keeps any page with a mark")
+	list := fs.Bool("list", false, "say which pages look blank and write nothing")
+	keepAnnots := fs.Bool("annotations", false, "count notes, highlights and form fields as ink")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	want := 2
+	usage := "<in.pdf> <out.pdf>"
+	if *list {
+		want, usage = 1, "<in.pdf>"
+	}
+	if err := wantArgs(fs, want, usage); err != nil {
+		return err
+	}
+	opt := ops.BlankOptions{
+		DPI: *dpi, MaxInk: *maxInk, KeepAnnotations: *keepAnnots,
+	}
+	if *list {
+		pdf, err := os.ReadFile(fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		blank, err := ops.BlankPages(pdf, opt)
+		if err != nil {
+			return err
+		}
+		if len(blank) == 0 {
+			fmt.Fprintln(c.out, "no blank pages")
+			return nil
+		}
+		for _, n := range blank {
+			fmt.Fprintln(c.out, n)
+		}
+		return nil
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	went, err := d.DropBlank(opt)
+	if err != nil {
+		return err
+	}
+	if err := save(d, fs.Arg(1)); err != nil {
+		return err
+	}
+	if len(went) == 0 {
+		fmt.Fprintln(c.out, "no blank pages")
+		return nil
+	}
+	fmt.Fprintln(c.out, "dropped", len(went), "page(s):", went)
+	return nil
 }

@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/go-pdfkit/ops"
 	"github.com/go-pdfkit/reader"
 )
 
@@ -641,3 +643,143 @@ func boxesOf(t *testing.T, path string) [][2]float64 {
 	}
 	return out
 }
+
+// deblank finds the pages that hold nothing and drops them.
+//
+// ⛔ -list is asserted FIRST and separately, because it is the dry run: a tool
+// that deletes pages has to be able to say which ones it means before it does
+// it, and a flag that silently wrote the file anyway would be worse than no
+// flag.
+func TestDeblankList(t *testing.T) {
+	in := mixedFixture(t)
+	code, out, msg := exec("deblank", "-list", in)
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	if got := strings.Fields(out); len(got) != 1 || got[0] != "2" {
+		t.Errorf("-list said %q, want page 2", out)
+	}
+	// And it wrote nothing: there was nowhere to write to, and it did not ask.
+	if code, _, _ := exec("deblank", "-list", in, filepath.Join(t.TempDir(), "x.pdf")); code != 1 {
+		t.Error("-list accepted an output file")
+	}
+}
+
+func TestDeblankDropsThem(t *testing.T) {
+	in := mixedFixture(t)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	code, said, msg := exec("deblank", in, out)
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	if !strings.Contains(said, "dropped 1") {
+		t.Errorf("said %q, want it to say one page went", said)
+	}
+	if got := len(contentsOf(t, out)); got != 1 {
+		t.Errorf("%d pages left, want 1", got)
+	}
+}
+
+func TestDeblankWithNothingToDrop(t *testing.T) {
+	// ⛔ NOT fixture(t, 2): its pages carry a content stream that is not
+	// drawing operators, so they render as blank paper and the detector is
+	// right to say so. A fixture whose "content" is invisible is no fixture
+	// for a tool that measures ink.
+	in := writeDoc(t, func(d *ops.Doc) {
+		for i := range 2 {
+			d.Blank(595, 842)
+			if err := d.Stamp(itoa(i+1), ops.Stamp{Text: "words", Font: ops.Helvetica, Size: 24}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	code, said, msg := exec("deblank", in, out)
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	if !strings.Contains(said, "no blank pages") {
+		t.Errorf("said %q", said)
+	}
+	if got := len(contentsOf(t, out)); got != 2 {
+		t.Errorf("%d pages, want 2", got)
+	}
+	code, said, _ = exec("deblank", "-list", in)
+	if code != 0 || !strings.Contains(said, "no blank pages") {
+		t.Errorf("-list said %q", said)
+	}
+}
+
+func TestDeblankRefusals(t *testing.T) {
+	in := mixedFixture(t)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, _ := exec("deblank", in); code != 1 {
+		t.Error("no output file was accepted")
+	}
+	if code, _, _ := exec("deblank", "/no/such/file.pdf", out); code != 1 {
+		t.Error("a missing file was accepted")
+	}
+	if code, _, _ := exec("deblank", "-list", "/no/such/file.pdf"); code != 1 {
+		t.Error("-list on a missing file was accepted")
+	}
+	if code, _, _ := exec("deblank", "-nonsense", in, out); code != 1 {
+		t.Error("an unknown flag was accepted")
+	}
+	// -list has its own path through the detector, so its refusal needs its
+	// own case: the two branches share nothing but the flag.
+	if code, _, _ := exec("deblank", "-list", "-dpi", "100000", in); code != 1 {
+		t.Error("-list past the pixel limit was accepted")
+	}
+	// And a file that cannot be written: the pages were measured, the blanks
+	// were dropped, and the result had nowhere to go.
+	if code, _, _ := exec("deblank", in, "/no/such/directory/out.pdf"); code != 1 {
+		t.Error("an unwritable output was accepted")
+	}
+	// ⛔ A document of nothing but blank pages is refused rather than emptied.
+	blanks := blankFixture(t)
+	if code, _, said := exec("deblank", blanks, out); code != 1 {
+		t.Errorf("a document of blank pages was emptied: %s", said)
+	}
+	// And the detector's own refusal reaches the exit status.
+	if code, _, _ := exec("deblank", "-dpi", "100000", in, out); code != 1 {
+		t.Error("a page past the pixel limit was accepted")
+	}
+}
+
+// mixedFixture is two pages: one with content, one blank.
+func mixedFixture(t *testing.T) string {
+	t.Helper()
+	return writeDoc(t, func(d *ops.Doc) {
+		d.Blank(595, 842)
+		if err := d.Stamp("1", ops.Stamp{Text: "words", Font: ops.Helvetica, Size: 24}); err != nil {
+			t.Fatal(err)
+		}
+		d.Blank(595, 842)
+	})
+}
+
+// blankFixture is two pages, both blank.
+func blankFixture(t *testing.T) string {
+	t.Helper()
+	return writeDoc(t, func(d *ops.Doc) {
+		d.Blank(595, 842)
+		d.Blank(595, 842)
+	})
+}
+
+func writeDoc(t *testing.T, build func(*ops.Doc)) string {
+	t.Helper()
+	d := ops.New()
+	build(d)
+	b, err := d.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "in.pdf")
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }

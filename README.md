@@ -88,6 +88,55 @@ document. `onepage` stacks every page onto a single long one. `poster` cuts
 each page into tiles so a plan can be printed larger than the paper and
 assembled.
 
+`deblank` finds the pages that hold nothing and drops them. It **draws** each
+page and counts the pixels that are not paper, because that is the only test
+that agrees with a reader: a page whose content stream is full of operators
+painting white, or drawing outside the media box, looks blank and is blank, and
+a page carrying a picture of nothing is blank too.
+
+```sh
+pdfops deblank -list scan.pdf          # say which, write nothing
+pdfops deblank scan.pdf tidied.pdf
+```
+
+⛔ **The default resolution is 150 DPI, and it was raised from 50 because of a
+measurement.** On A4:
+
+| | 50 DPI | 150 DPI |
+| --- | --- | --- |
+| the page | 414 × 585 | 1240 × 1755 |
+| one pixel | 4.1e-06 of it | 4.6e-07 |
+| an 8-point full stop | **1 pixel** | 4 pixels |
+| an 8-point comma | 2 pixels | 8 pixels |
+
+At 50 DPI a full stop is *exactly the mark a speck of dust makes*, so no
+threshold at that resolution can tell punctuation from dirt. At 150 there is a
+factor of four to set `-max-ink` from, and `TestMeasureTheInkLadder` prints the
+whole ladder so that a renderer change which moved either end fails there
+instead of silently reclassifying somebody's pages.
+
+⛔ **The zero value is the strictest setting**, not a middle one: a page with a
+single inked pixel is kept. This is the input to deleting pages — a page
+wrongly called blank destroys content, while a blank page wrongly kept merely
+leaves a blank page. For scans, `-max-ink 1e-6` is about two pixels: it
+forgives a speck and still keeps a page holding a full stop. It is not the
+default because whether that margin holds depends on the scanner, which this
+package cannot see.
+
+Three more things it will not do:
+
+- **it will not call a page of solid colour blank.** The test is distance from
+  *white*, not uniformity; a measure of variance would delete a deliberate
+  black separator sheet;
+- **it will not empty the document.** Every page blank is an error, because a
+  file of no pages still opens and still has a size, and a caller handed one
+  would be told nothing was wrong;
+- **it does not count annotations as ink** unless asked: a page whose only mark
+  is a sticky note is blank paper somebody wrote on.
+
+And `-list` writes nothing and takes no output file, because the first thing
+anybody should do with a tool that deletes pages is ask it which ones it means.
+
 ⛔ `divide` makes the **same grid** as `poster` and is the opposite operation.
 `poster` keeps every piece the size of the page it came from, so it
 **enlarges**: the pieces taped together make one page the size of a wall.
