@@ -74,6 +74,7 @@ var commands = []command{
 	{"decrypt", "<in.pdf> <out.pdf>", "write the file without its protection", runDecrypt},
 	{"permissions", "<in.pdf>", "say how the file is protected and what it allows", runPermissions},
 	{"text", "[-pages <range>] [-layout] [-json] <in.pdf>", "read the text off the pages", runText},
+	{"tables", "[-pages <range>] [-as csv|json|md] [-to <directory>] <in.pdf>", "find the grids the text lines up into", runTables},
 	{"images", "[-pages <range>] <in.pdf> <out-directory>", "write out the pictures the pages place", runImages},
 	{"attachments", "[-to <directory>] <in.pdf>", "list the files the document carries, or write them out", runAttachments},
 	{"attach", "-file <path> [-as <name>] [-description <text>] <in.pdf> <out.pdf>", "carry a file inside the document", runAttach},
