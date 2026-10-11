@@ -49,6 +49,7 @@ var commands = []command{
 	{"duplex", "[-split <n>] [-keep-backs] <in.pdf> <out.pdf>", "put a fronts-then-backs scan back in reading order", runDuplex},
 	{"onepage", "<in.pdf> <out.pdf>", "put every page onto a single page", runOnePage},
 	{"poster", "-across <n> -down <n> <in.pdf> <out.pdf>", "cut each page into tiles, to print larger than the paper", runPoster},
+	{"divide", "-across <n> -down <n> <in.pdf> <out.pdf>", "cut each page into smaller pages of its own content", runDivide},
 	{"overlay", "-with <mark.pdf> <in.pdf> <out.pdf>", "draw another file over these pages", runOverlay},
 	{"underlay", "-with <mark.pdf> <in.pdf> <out.pdf>", "draw another file beneath these pages", runUnderlay},
 	{"blank", "-before <page> <in.pdf> <out.pdf>", "insert an empty page", runBlank},
@@ -1626,6 +1627,33 @@ func runDuplex(c *context, args []string) error {
 		return err
 	}
 	if err := d.DuplexCollate(*split, !*keep); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+// runDivide cuts each page into smaller pages, each the size of the piece it
+// holds.
+//
+// ⛔ The default is 2 across and 1 down — a spread cut down the middle — and
+// NOT poster's 2x2. A page cut into four when the caller meant halves is a
+// mistake that looks deliberate, so the default is the job the tool is named
+// for.
+func runDivide(c *context, args []string) error {
+	fs := flags("divide")
+	across := fs.Int("across", 2, "how many pieces across each page becomes")
+	down := fs.Int("down", 1, "how many pieces down each page becomes")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.Divide(*across, *down); err != nil {
 		return err
 	}
 	return save(d, fs.Arg(1))
