@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/go-pdfkit/reader"
 )
 
 // interleave takes one page from each document in turn, so two two-page files
@@ -559,4 +562,82 @@ func TestDuplexRefusals(t *testing.T) {
 	if code, _, _ := exec("duplex", "-nonsense", in, out); code != 1 {
 		t.Error("an unknown flag was accepted")
 	}
+}
+
+// divide cuts each page into smaller pages of its own content. ⛔ The
+// assertion is on the MEDIA BOX, because `divide` and `poster` make the same
+// number of pages out of the same file and differ only in what those pages
+// measure — a page count passes on either.
+func TestDivide(t *testing.T) {
+	in := fixture(t, 1)
+	dir := t.TempDir()
+	divided, postered := filepath.Join(dir, "d.pdf"), filepath.Join(dir, "p.pdf")
+	if code, _, msg := exec("divide", in, divided); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	if code, _, msg := exec("poster", "-across", "2", "-down", "1", in, postered); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	// The default is 2 across and 1 down: a spread cut down the middle.
+	if got := len(contentsOf(t, divided)); got != 2 {
+		t.Fatalf("divide made %d pages, want 2", got)
+	}
+	d, p := boxesOf(t, divided), boxesOf(t, postered)
+	for i := range d {
+		if d[i] == p[i] {
+			t.Errorf("piece %d is %v either way: divide must make the pages "+
+				"smaller where poster keeps them the page's size", i+1, d[i])
+		}
+	}
+	// fixture pages are 100 by 200, so halves are 50 by 200.
+	for i, b := range d {
+		if b != [2]float64{50, 200} {
+			t.Errorf("divide piece %d is %v, want 50x200", i+1, b)
+		}
+	}
+}
+
+func TestDivideRefusals(t *testing.T) {
+	in := fixture(t, 1)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, _ := exec("divide", in); code != 1 {
+		t.Error("one argument was accepted")
+	}
+	if code, _, _ := exec("divide", "-across", "0", in, out); code != 1 {
+		t.Error("a grid of zero was accepted")
+	}
+	if code, _, _ := exec("divide", "/no/such/file.pdf", out); code != 1 {
+		t.Error("a missing file was accepted")
+	}
+	if code, _, _ := exec("divide", "-nonsense", in, out); code != 1 {
+		t.Error("an unknown flag was accepted")
+	}
+}
+
+// boxesOf reads back the width and height of every page of a written file, so
+// a test can assert what the pages MEASURE rather than how many there are.
+func boxesOf(t *testing.T, path string) [][2]float64 {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := reader.Open(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([][2]float64, 0, d.PageCount())
+	for i := 1; i <= d.PageCount(); i++ {
+		page, err := d.Page(i)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(reader.FormatObject(page.Get("MediaBox")))
+		var x0, y0, x1, y1 float64
+		if _, err := fmt.Sscanf(s, "[%g %g %g %g]", &x0, &y0, &x1, &y1); err != nil {
+			t.Fatalf("page %d: cannot read MediaBox %q: %v", i, s, err)
+		}
+		out = append(out, [2]float64{x1 - x0, y1 - y0})
+	}
+	return out
 }

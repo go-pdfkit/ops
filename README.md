@@ -42,9 +42,10 @@ pdfops reverse back-to-front.pdf right-way-round.pdf
 pdfops nup -n 4 slides.pdf handout.pdf
 pdfops booklet chapter.pdf to-fold.pdf
 pdfops interleave both.pdf fronts.pdf backs.pdf
-pdfops duplex     scan.pdf document.pdf
+pdfops duplex scan.pdf document.pdf
 pdfops onepage strip.pdf one-long-page.pdf
 pdfops poster -across 2 -down 2 plan.pdf tiles.pdf
+pdfops divide -across 2 spread.pdf pages.pdf
 pdfops overlay -with letterhead.pdf plain.pdf headed.pdf
 pdfops underlay -with watermark.pdf report.pdf behind.pdf
 pdfops blank -before 3 report.pdf report-with-a-gap.pdf
@@ -86,6 +87,19 @@ single-sided scans — the fronts and the backs — become one double-sided
 document. `onepage` stacks every page onto a single long one. `poster` cuts
 each page into tiles so a plan can be printed larger than the paper and
 assembled.
+
+⛔ `divide` makes the **same grid** as `poster` and is the opposite operation.
+`poster` keeps every piece the size of the page it came from, so it
+**enlarges**: the pieces taped together make one page the size of a wall.
+`divide` keeps the content at its own size and makes the **pages** smaller, so
+the pieces laid side by side are the page again at 1:1 — which is what a
+two-page spread scanned as one wide sheet, or two tickets printed on one page,
+needs.
+
+Confusing them gives a result that looks right in a thumbnail and is wrong by a
+factor of `across` and `down`. The tests assert the **media box**, not the page
+count, and `TestDivideIsNotPoster` compares the two directly: without it, every
+assertion about `divide` could be satisfied by `poster`.
 
 
 `duplex` is the same job when the scanner left **one** file rather than two: a
