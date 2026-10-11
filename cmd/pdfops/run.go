@@ -64,6 +64,7 @@ var commands = []command{
 	{"repair", "[-check] <in.pdf> [out.pdf]", "rebuild a file whose structure is damaged, and say whether it was", runRepair},
 	{"layers", "(-list | -show <name> | -hide <name> | -add <name> | -drop <name>) <in.pdf> [out.pdf]", "the optional content a viewer calls layers", runLayers},
 	{"labels", "(-list | -clear | -rule <spec> …) <in.pdf> [out.pdf]", "set what a viewer shows in its toolbar: i, ii, iii then 1, 2, 3", runLabels},
+	{"textcolour", "-to <#rrggbb> [-pages <range>] <in.pdf> <out.pdf>", "paint the text one colour, leaving the rest of the page alone", runTextColour},
 	{"strip", "[-annotations] [-bookmarks] <in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
 	{"sanitize", "<in.pdf> <out.pdf>", "remove what runs rather than shows: scripts, launching, embedded files", runSanitize},
 	{"outline", "(-drop | -from <toc.txt>) <in.pdf> <out.pdf>", "replace or remove the bookmarks", runOutline},
@@ -1936,4 +1937,92 @@ func runLayers(c *context, args []string) error {
 		}
 	}
 	return save(d, fs.Arg(1))
+}
+
+// runTextColour paints the text one colour, leaving the rest of the page as
+// it was.
+func runTextColour(c *context, args []string) error {
+	fs := flags("textcolour")
+	to := fs.String("to", "", "the colour, as #rgb, #rrggbb, or a name: black, white, red, green, blue")
+	pages := fs.String("pages", "all", "which pages")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	if *to == "" {
+		return fmt.Errorf("-to is required: what colour should the text be?")
+	}
+	r, g, b, err := parseColour(*to)
+	if err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.RecolourText(*pages, r, g, b); err != nil {
+		return err
+	}
+	if err := save(d, fs.Arg(1)); err != nil {
+		return err
+	}
+	// ⛔ Said out loud, and AFTER the write because that is when it is known.
+	// A document whose text is all inside Form XObjects would otherwise come
+	// back looking converted and be unchanged — the one failure a caller
+	// cannot see by opening the result and glancing at it.
+	if n := d.UnreachedText(); n > 0 {
+		fmt.Fprintf(c.out, "%d drawing(s) were not recoloured: text inside a "+
+			"form or an image is shared between pages, so recolouring it for "+
+			"one page would change others\n", n)
+	}
+	return nil
+}
+
+// parseColour reads #rgb, #rrggbb, or one of a few names.
+//
+// ⛔ The names are the ones a person types when they mean "make it black
+// again", and nothing more: a long colour list is a dictionary somebody has
+// to maintain, and "#rrggbb" is what a design tool gives you anyway.
+func parseColour(s string) (r, g, b float64, err error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "black":
+		return 0, 0, 0, nil
+	case "white":
+		return 1, 1, 1, nil
+	case "red":
+		return 1, 0, 0, nil
+	case "green":
+		return 0, 1, 0, nil
+	case "blue":
+		return 0, 0, 1, nil
+	}
+	hex := strings.TrimPrefix(strings.TrimSpace(s), "#")
+	switch len(hex) {
+	case 3:
+		// ⛔ Each digit is DOUBLED, not shifted: #f00 is ff0000, so the
+		// component is 0xf*17 and not 0xf*16. A shift gives 240/255 for what
+		// every browser and design tool calls full red.
+		var v [3]int64
+		for i := 0; i < 3; i++ {
+			n, convErr := strconv.ParseInt(hex[i:i+1], 16, 32)
+			if convErr != nil {
+				return 0, 0, 0, fmt.Errorf("%q is not a colour", s)
+			}
+			v[i] = n * 17
+		}
+		return float64(v[0]) / 255, float64(v[1]) / 255, float64(v[2]) / 255, nil
+	case 6:
+		var v [3]int64
+		for i := 0; i < 3; i++ {
+			n, convErr := strconv.ParseInt(hex[i*2:i*2+2], 16, 32)
+			if convErr != nil {
+				return 0, 0, 0, fmt.Errorf("%q is not a colour", s)
+			}
+			v[i] = n
+		}
+		return float64(v[0]) / 255, float64(v[1]) / 255, float64(v[2]) / 255, nil
+	}
+	return 0, 0, 0, fmt.Errorf("%q is not a colour: say #rgb, #rrggbb, or a name", s)
 }

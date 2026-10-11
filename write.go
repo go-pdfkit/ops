@@ -194,6 +194,17 @@ func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, whe
 	}
 	ensureGeometry(copied)
 
+	// ⛔ The recolouring happens BEFORE the decoration, and the order matters:
+	// a stamp's own colour is the stamp's business, so recolouring the page's
+	// text must not reach the marks this document put on top of it.
+	if p.recolour != nil {
+		if content, err := p.src.PageContent(p.number); err == nil {
+			out, unreached := recolourContent(content, *p.recolour)
+			d.unreached += unreached
+			copied["Contents"] = w.Add(contentStream(out, nil))
+		}
+	}
+
 	extra, resources := d.borrowedExtras(w, p, src)
 	if len(extra) > 0 {
 		d.decorate(w, p, src, copied, extra, resources)
@@ -228,7 +239,19 @@ func (d *Doc) borrowedExtras(w *reader.Writer, p Page, src reader.Dict) ([]byte,
 func (d *Doc) decorate(w *reader.Writer, p Page, src, copied reader.Dict, extra []byte, resources reader.Dict) {
 	before := w.Add(contentStream([]byte("q\n"), nil))
 	after := w.Add(contentStream(append([]byte("Q\n"), extra...), nil))
-	list := append(reader.Array{before}, contentParts(w, p.src, src)...)
+	// ⛔ The page's content may ALREADY have been rewritten — by a
+	// recolouring, which replaced Contents with one stream of its own. Taking
+	// contentParts unconditionally, which is what the first draft did, threw
+	// that away: a page both recoloured and watermarked came back in its
+	// original colours, and nothing failed. What is here is used when it is
+	// a rewritten stream and the source's parts otherwise.
+	var parts reader.Array
+	if rewritten, ok := copied["Contents"].(reader.Ref); ok && p.recolour != nil {
+		parts = reader.Array{rewritten}
+	} else {
+		parts = contentParts(w, p.src, src)
+	}
+	list := append(reader.Array{before}, parts...)
 	copied["Contents"] = append(list, after)
 
 	// The resources are rebuilt as a dictionary of this file's own, because

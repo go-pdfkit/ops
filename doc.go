@@ -45,6 +45,11 @@ type Doc struct {
 	// that union does not exist until the pages are known to be final.
 	layerEdits []layerEdit
 
+	// unreached counts the text-showing operations the last write could not
+	// recolour, because they are inside a Form XObject. See
+	// [Doc.UnreachedText].
+	unreached int
+
 	// attached are files to put inside the document, and dropped are the names
 	// of files it came in with that are not to go back out. A file the source
 	// carried is kept by being copied at write time rather than held here, so
@@ -89,6 +94,11 @@ type Page struct {
 
 	// marks is the text drawn on top of whatever the page already shows.
 	marks []stampInstance
+
+	// recolour, when set, is the colour this page's own text is to be painted
+	// in. A pointer rather than a value with a flag beside it, because black
+	// is a colour somebody asks for.
+	recolour *[3]float64
 }
 
 // Open reads a PDF file held in memory, with the empty password.
