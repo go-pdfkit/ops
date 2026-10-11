@@ -886,3 +886,137 @@ func damagedFixture(t *testing.T) string {
 	}
 	return path
 }
+
+// labels sets what a viewer shows in its toolbar.
+func TestLabels(t *testing.T) {
+	in := fixture(t, 5)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	code, _, msg := exec("labels",
+		"-rule", "pages=1-2;style=r",
+		"-rule", "pages=3-5;style=D",
+		in, out)
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	code, said, msg := exec("labels", "-list", out)
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	// ⛔ The POSITION and the label, both: the use of this tool is correcting
+	// a document where the two disagree, so printing only the labels would
+	// hide the thing being looked for.
+	for _, want := range []string{"1\ti", "2\tii", "3\t1", "4\t2", "5\t3"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("-list is missing %q:\n%s", want, said)
+		}
+	}
+}
+
+func TestLabelsWithAPrefixAndAStart(t *testing.T) {
+	in := fixture(t, 3)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, msg := exec("labels", "-rule", "pages=all;style=D;prefix=A-;start=7", in, out); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	_, said, _ := exec("labels", "-list", out)
+	for _, want := range []string{"1\tA-7", "2\tA-8", "3\tA-9"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("missing %q:\n%s", want, said)
+		}
+	}
+}
+
+// ⛔ "continue" works with and without a value. A setting that only worked one
+// of the two ways would be a trap in a shell script that built the spec.
+func TestLabelsContinueBothWays(t *testing.T) {
+	in := fixture(t, 6)
+	dir := t.TempDir()
+	for _, spec := range []string{
+		"pages=1-2,5-6;style=D;continue",
+		"pages=1-2,5-6;style=D;continue=true",
+	} {
+		out := filepath.Join(dir, "c.pdf")
+		if code, _, msg := exec("labels", "-rule", spec, in, out); code != 0 {
+			t.Fatalf("%s: code %d: %s", spec, code, msg)
+		}
+		_, said, _ := exec("labels", "-list", out)
+		if !strings.Contains(said, "5\t3") {
+			t.Errorf("%s did not carry the numbering:\n%s", spec, said)
+		}
+	}
+	// And continue=false is off, so the second run starts again.
+	out := filepath.Join(dir, "f.pdf")
+	if code, _, msg := exec("labels", "-rule", "pages=1-2,5-6;style=D;continue=false", in, out); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	_, said, _ := exec("labels", "-list", out)
+	if !strings.Contains(said, "5\t1") {
+		t.Errorf("continue=false carried the numbering anyway:\n%s", said)
+	}
+}
+
+func TestLabelsClear(t *testing.T) {
+	in := fixture(t, 3)
+	dir := t.TempDir()
+	withLabels := filepath.Join(dir, "with.pdf")
+	if code, _, msg := exec("labels", "-rule", "style=D", in, withLabels); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	bare := filepath.Join(dir, "bare.pdf")
+	if code, _, msg := exec("labels", "-clear", withLabels, bare); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	code, said, _ := exec("labels", "-list", bare)
+	if code != 0 || !strings.Contains(said, "no page labels") {
+		t.Errorf("-list after -clear said %q", said)
+	}
+}
+
+func TestLabelsRefusals(t *testing.T) {
+	in := fixture(t, 2)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, _ := exec("labels", "-rule", "style=D", in); code != 1 {
+		t.Error("no output file was accepted")
+	}
+	if code, _, _ := exec("labels", "-list", in, out); code != 1 {
+		t.Error("-list accepted an output file")
+	}
+	// ⛔ Neither -clear nor a rule is a mistake, and so is both: a caller who
+	// said both meant one of them and the command cannot know which.
+	if code, _, _ := exec("labels", in, out); code != 1 {
+		t.Error("neither -clear nor -rule was accepted")
+	}
+	if code, _, _ := exec("labels", "-clear", "-rule", "style=D", in, out); code != 1 {
+		t.Error("-clear with a rule was accepted")
+	}
+	for _, spec := range []string{"nonsense=1", "start=x", "style=Q", "pages=zzz"} {
+		if code, _, _ := exec("labels", "-rule", spec, in, out); code != 1 {
+			t.Errorf("-rule %q was accepted", spec)
+		}
+	}
+	if code, _, _ := exec("labels", "-rule", "style=D", "/no/such/file.pdf", out); code != 1 {
+		t.Error("a missing file was accepted")
+	}
+	if code, _, _ := exec("labels", "-list", "/no/such/file.pdf"); code != 1 {
+		t.Error("-list on a missing file was accepted")
+	}
+	if code, _, _ := exec("labels", "-nonsense", in, out); code != 1 {
+		t.Error("an unknown flag was accepted")
+	}
+	if code, _, _ := exec("labels", "-rule", "style=D", in, "/no/such/dir/out.pdf"); code != 1 {
+		t.Error("an unwritable output was accepted")
+	}
+	// An empty rule spec is a rule over every page with no style: the prefix
+	// alone, which is empty, so nothing is labelled. It must not crash.
+	if code, _, _ := exec("labels", "-rule", "", in, out); code != 0 {
+		t.Error("an empty rule was refused")
+	}
+}
+
+// ⛔ A document with no labels says so rather than printing five blank lines.
+func TestLabelsListOfADocumentWithNone(t *testing.T) {
+	code, said, _ := exec("labels", "-list", fixture(t, 3))
+	if code != 0 || !strings.Contains(said, "no page labels") {
+		t.Errorf("code %d, said %q", code, said)
+	}
+}

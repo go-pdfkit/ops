@@ -199,6 +199,72 @@ themselves truncated may still be unreadable. A file that did not need
 repairing is **said out loud and is not an error**, so that "repair everything
 in this directory" can be scripted.
 
+
+`labels` sets what a viewer shows in its **toolbar** — "iv of 320" — which is
+never what is printed on the paper. For a number on the page, that is `number`
+above.
+
+```sh
+pdfops labels -list book.pdf
+pdfops labels -rule 'pages=1-12;style=r' -rule 'pages=13-;style=D' book.pdf out.pdf
+pdfops labels -rule 'pages=all;style=D;prefix=A-;start=1' appendix.pdf out.pdf
+pdfops labels -clear book.pdf plain.pdf
+```
+
+The six styles are the format's own: `D` (1, 2, 3), `r` (i, ii, iii), `R` (I,
+II, III), `a` (a, b, c), `A` (A, B, C), and an empty style, which is the prefix
+alone — how a run of pages is marked "Cover" or "Insert".
+
+⛔ **A page-label range in a PDF is CONTIGUOUS.** The file holds the first page
+of each run and the viewer counts forward from there, so a rule over
+`1-9,30-40` has to be *compiled* into two runs. Without `continue` the second
+run starts again at `start`; with it, it carries on. `pages=odd` is the extreme
+of the same thing — fifty runs of one page over a hundred — and both answers are
+expressible only because a rule is compiled rather than stored as written.
+
+⛔ **A page-label tree has no gaps either.** An entry labels from its own key
+until the *next* entry, so a document labelled 1, 2 and then meant to stop
+comes back 1, 2, 3, 4 unless the stop is said out loud: an entry with neither a
+style nor a prefix. The first draft skipped unlabelled pages and the round-trip
+caught it.
+
+⛔ **`start` must be at least 1**, and that is the format's rule rather than a
+choice here: ISO 32000-1 table 159 says `/St` "shall be greater than or equal
+to 1". A zero-based numbering scheme is not expressible as a numeric style, so
+a `start` below one is refused rather than written out of specification — a
+file that opens in one viewer and renumbers itself in another is worse than a
+refusal. BentoPDF's own tool offers "set to 0 for zero-based numbering", and
+what that writes is a value the standard forbids.
+
+⛔ **A page label's letters are not a spreadsheet's columns.** Table 159 says
+the letters run "A to Z for the first 26 pages, AA to ZZ for the next 26" — so
+27 is **AA** and 28 is **BB**, where a spreadsheet's 28 is AB. Borrowing the
+spreadsheet rule, which is the one everybody has written before, relabels every
+appendix past the twenty-sixth.
+
+Roman numerals stop at 3999, where the additive notation runs out — 4000 needs
+a bar over the M, which neither a PDF string nor a page number has — and past
+it the number is written in decimal. A label a viewer shows *wrongly* is worse
+than one it shows in the wrong style.
+
+### ⛔ Every verb used to drop the page labels
+
+A `/PageLabels` tree is keyed by page **index**, so it cannot be carried across
+a rebuild the way the other document keys are: after a `select` or a `reverse`
+every label would be on the wrong page. So this package dropped it — and a
+document whose front matter was numbered i, ii, iii came back from a
+**watermark** numbered 1, 2, 3.
+
+The labels are now asked for **per page** and rebuilt, which is right in both
+directions: a verb that keeps the pages keeps their labels, and a verb that
+moves them moves the labels with them. A merge keeps each source's labels on
+its own pages.
+
+The runs are compressed on the way out: three hundred decimal pages are **one**
+entry, not three hundred. A label no style can explain becomes a run of one with
+the whole label as a literal prefix — the file then says exactly what the viewer
+must show, at the cost of an entry.
+
 `attachments` lists the files a document carries, and writes them out with
 `-to`. A name comes out of the document rather than from whoever runs the
 command, so it is stripped to its last element: `../escaped.txt` is written

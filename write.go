@@ -92,6 +92,15 @@ func (d *Doc) Bytes() ([]byte, error) {
 	if outlines := d.writeOutlines(w, where, refs); outlines != nil {
 		catalog["Outlines"] = outlines
 	}
+	// ⛔ Page labels are written here rather than carried by keepCatalogue with
+	// the other document keys, because a /PageLabels tree is keyed by page
+	// INDEX: copied across a rebuild that reordered, removed or merged pages
+	// it would leave every label on the wrong page. They are asked for per
+	// page instead. Until this, every verb silently dropped them — a document
+	// that was only stamped came back with its front matter renumbered.
+	if labels := d.writePageLabels(w); labels != nil {
+		catalog["PageLabels"] = labels
+	}
 	trailer := reader.Dict{"Root": w.Add(catalog)}
 	if len(d.info) > 0 {
 		trailer["Info"] = w.Add(d.info)
