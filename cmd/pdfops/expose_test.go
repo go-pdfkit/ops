@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -783,3 +785,104 @@ func writeDoc(t *testing.T, build func(*ops.Doc)) string {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// repair writes a file back out with its structure rebuilt, and says whether
+// rebuilding was needed.
+//
+// ⛔ Both answers are asserted, because a verb that said "rebuilt" whatever it
+// was given would pass a test that only ever handed it a damaged file — and
+// that is the direction this one would fail in, since the honest answer for a
+// healthy file is the less interesting one.
+func TestRepair(t *testing.T) {
+	dir := t.TempDir()
+	healthy, damaged := fixture(t, 2), damagedFixture(t)
+
+	out := filepath.Join(dir, "healthy.pdf")
+	code, said, msg := exec("repair", healthy, out)
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	if !strings.Contains(said, "nothing needed rebuilding") {
+		t.Errorf("a healthy file: said %q", said)
+	}
+	if got := len(contentsOf(t, out)); got != 2 {
+		t.Errorf("%d pages came out, want 2", got)
+	}
+
+	out = filepath.Join(dir, "fixed.pdf")
+	code, said, msg = exec("repair", damaged, out)
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	if !strings.Contains(said, "rebuilt") || strings.Contains(said, "nothing") {
+		t.Errorf("a damaged file: said %q", said)
+	}
+	if got := len(contentsOf(t, out)); got != 2 {
+		t.Errorf("%d pages came out of the repair, want 2", got)
+	}
+	// ⛔ And what came out is itself clean: `repair` on the result says there
+	// was nothing to do. A repair whose output still needs repairing is not
+	// one.
+	code, said, _ = exec("repair", "-check", out)
+	if code != 0 || !strings.Contains(said, "nothing needed rebuilding") {
+		t.Errorf("the repaired file still needs repairing: %q", said)
+	}
+}
+
+func TestRepairCheck(t *testing.T) {
+	code, said, msg := exec("repair", "-check", damagedFixture(t))
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	if !strings.Contains(said, "rebuilt") {
+		t.Errorf("-check said %q", said)
+	}
+	// -check takes no output file, because it writes nothing.
+	if code, _, _ := exec("repair", "-check", damagedFixture(t), filepath.Join(t.TempDir(), "x.pdf")); code != 1 {
+		t.Error("-check accepted an output file")
+	}
+}
+
+func TestRepairRefusals(t *testing.T) {
+	in := fixture(t, 1)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, _ := exec("repair", in); code != 1 {
+		t.Error("no output file was accepted")
+	}
+	if code, _, _ := exec("repair", "/no/such/file.pdf", out); code != 1 {
+		t.Error("a missing file was accepted")
+	}
+	if code, _, _ := exec("repair", "-nonsense", in, out); code != 1 {
+		t.Error("an unknown flag was accepted")
+	}
+	// Both branches have their own save, so both need their own unwritable
+	// output: a healthy file and a damaged one take different paths through
+	// the verb and only one of them was covered by the first draft.
+	if code, _, _ := exec("repair", in, "/no/such/directory/out.pdf"); code != 1 {
+		t.Error("an unwritable output was accepted for a healthy file")
+	}
+	if code, _, _ := exec("repair", damagedFixture(t), "/no/such/directory/out.pdf"); code != 1 {
+		t.Error("an unwritable output was accepted for a damaged file")
+	}
+}
+
+// damagedFixture points a file's startxref at the wrong place, which is the
+// commonest way a PDF arrives damaged: the objects are all there and the table
+// that says where they are is not.
+func damagedFixture(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(fixture(t, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`startxref\s*\n\s*\d+`)
+	broken := re.ReplaceAll(b, []byte("startxref\n999999"))
+	if bytes.Equal(broken, b) {
+		t.Fatal("the fixture has no startxref to break, so this proves nothing")
+	}
+	path := filepath.Join(t.TempDir(), "damaged.pdf")
+	if err := os.WriteFile(path, broken, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}

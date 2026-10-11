@@ -170,6 +170,35 @@ range, because the reversal absorbs the difference. It passed at the ceiling
 **and at the floor**, so it proved nothing; the negative control is what said
 so, and the assertion now uses `-keep-backs`, where the split is load-bearing.
 
+
+`repair` writes a file back out with its structure rebuilt, and says whether
+rebuilding was needed. `-check` answers that question and writes nothing.
+
+```sh
+pdfops repair -check suspect.pdf
+pdfops repair broken.pdf fixed.pdf
+```
+
+⛔ **The rebuilding is not this verb's doing.**
+[go-pdfkit/reader](https://github.com/go-pdfkit/reader) repairs a damaged file
+on its own and quietly, which is the right behaviour for a reader — a caller
+asking for page three wants page three, not a lecture. What was missing was a
+way to **say** it happened and to keep the result, and that is the whole of
+this verb. `Doc.Repaired()` is the same answer in Go.
+
+It reports on **any** source, not all: a merged document's pages come from
+several files, and one damaged source is the answer to *"did this need
+repairing"*. A true that depended on every source being broken would be false
+for every real merge.
+
+⛔ And the scope is **reader's**, not QPDF's. What it recovers is a
+cross-reference table that is wrong, missing, or points into the middle of
+something else — the commonest damage, and the kind where the objects are all
+still there. It is not a general salvage engine, and a file whose objects are
+themselves truncated may still be unreadable. A file that did not need
+repairing is **said out loud and is not an error**, so that "repair everything
+in this directory" can be scripted.
+
 `attachments` lists the files a document carries, and writes them out with
 `-to`. A name comes out of the document rather than from whoever runs the
 command, so it is stripped to its last element: `../escaped.txt` is written
