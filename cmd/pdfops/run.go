@@ -62,6 +62,7 @@ var commands = []command{
 	{"metadata", "(-set <Key=value> … | -clear) <in.pdf> <out.pdf>", "write what the file says about itself", runMetadata},
 	{"version", "-set <version> <in.pdf> <out.pdf>", "set the PDF version the file declares", runVersion},
 	{"repair", "[-check] <in.pdf> [out.pdf]", "rebuild a file whose structure is damaged, and say whether it was", runRepair},
+	{"labels", "(-list | -clear | -rule <spec> …) <in.pdf> [out.pdf]", "set what a viewer shows in its toolbar: i, ii, iii then 1, 2, 3", runLabels},
 	{"strip", "[-annotations] [-bookmarks] <in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
 	{"sanitize", "<in.pdf> <out.pdf>", "remove what runs rather than shows: scripts, launching, embedded files", runSanitize},
 	{"outline", "(-drop | -from <toc.txt>) <in.pdf> <out.pdf>", "replace or remove the bookmarks", runOutline},
@@ -1765,4 +1766,95 @@ func runRepair(c *context, args []string) error {
 		return nil
 	}
 	return save(d, fs.Arg(1))
+}
+
+// runLabels sets the page labels a viewer shows in its toolbar.
+func runLabels(c *context, args []string) error {
+	fs := flags("labels")
+	var rules stringList
+	fs.Var(&rules, "rule", "a label rule: pages=1-3;style=r;prefix=A-;start=1;continue (repeatable)")
+	list := fs.Bool("list", false, "say what each page is labelled and write nothing")
+	clear := fs.Bool("clear", false, "remove the labels")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	want, usage := 2, "<in.pdf> <out.pdf>"
+	if *list {
+		want, usage = 1, "<in.pdf>"
+	}
+	if err := wantArgs(fs, want, usage); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if *list {
+		labels := d.PageLabels()
+		if len(labels) == 0 {
+			fmt.Fprintln(c.out, "no page labels")
+			return nil
+		}
+		for i, l := range labels {
+			// ⛔ The page's POSITION and its label, both: the whole use of
+			// this tool is correcting a document where the two disagree, so
+			// printing only the labels would hide the thing being looked for.
+			fmt.Fprintf(c.out, "%d\t%s\n", i+1, l)
+		}
+		return nil
+	}
+	if *clear == (len(rules) > 0) {
+		return fmt.Errorf("say either -clear or one or more -rule, not both and not neither")
+	}
+	parsed := make([]ops.LabelRule, 0, len(rules))
+	for i, spec := range rules {
+		r, err := parseLabelRule(spec)
+		if err != nil {
+			return fmt.Errorf("-rule %d: %w", i+1, err)
+		}
+		parsed = append(parsed, r)
+	}
+	if err := d.SetPageLabels(parsed); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+// parseLabelRule reads pages=1-3;style=r;prefix=A-;start=1;continue.
+//
+// ⛔ Semicolons separate the settings and not commas, because a page range
+// HAS commas in it: "pages=1-9,30-40" is one setting and a comma-separated
+// form would have to escape them.
+func parseLabelRule(spec string) (ops.LabelRule, error) {
+	var r ops.LabelRule
+	for _, part := range strings.Split(spec, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		key, value, hasValue := strings.Cut(part, "=")
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "pages":
+			r.Pages = value
+		case "style":
+			r.Style = ops.LabelStyle(value)
+		case "prefix":
+			r.Prefix = value
+		case "start":
+			n, err := strconv.Atoi(strings.TrimSpace(value))
+			if err != nil {
+				return r, fmt.Errorf("start=%q is not a number", value)
+			}
+			r.Start = n
+		case "continue":
+			// ⛔ A flag, with or without a value: "continue" and
+			// "continue=true" both mean it, and "continue=false" means it
+			// does not. A setting that only worked one of the two ways would
+			// be a trap in a shell script that built the spec.
+			r.Continue = !hasValue || value != "false" && value != "0"
+		default:
+			return r, fmt.Errorf("%q is not a setting: they are pages, style, prefix, start and continue", key)
+		}
+	}
+	return r, nil
 }

@@ -32,6 +32,13 @@ type Doc struct {
 	// of its caller's rather than of anybody else's.
 	outline []Bookmark
 
+	// labels is one page label per page, and labelsSet says the caller has
+	// decided them — including deciding there are none, which is why the two
+	// are separate: a nil labels with labelsSet is "remove the labels" and a
+	// nil labels without it is "carry over what the sources said".
+	labels    []string
+	labelsSet bool
+
 	// attached are files to put inside the document, and dropped are the names
 	// of files it came in with that are not to go back out. A file the source
 	// carried is kept by being copied at write time rather than held here, so
