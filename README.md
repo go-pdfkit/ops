@@ -63,6 +63,9 @@ pdfops -password letmein permissions locked.pdf
 pdfops text paper.pdf
 pdfops text -layout -pages 1 paper.pdf
 pdfops text -layout -json paper.pdf
+pdfops tables accounts.pdf
+pdfops tables -as md -pages 3 accounts.pdf
+pdfops tables -as json -to tables/ accounts.pdf
 pdfops images paper.pdf pictures/
 pdfops attachments report.pdf
 pdfops attachments -to files/ report.pdf
@@ -307,6 +310,41 @@ what you mean.
 has two "Markup" layers, and switching one of them at random is a change
 nobody asked for and nobody can see, so an ambiguous name is refused with the
 count.
+
+`tables` finds the grids a page's text lines up into, and writes them as CSV
+(RFC 4180, a blank line between one table and the next), as JSON (with the page
+and the box, so a caller knows where to look), or as GFM pipe tables.
+
+```sh
+pdfops tables accounts.pdf
+pdfops tables -as md -pages 3 accounts.pdf
+pdfops tables -as json -to tables/ accounts.pdf
+```
+
+A page holds no table — it holds text put at places — so this reports an
+**inference**, and
+[`extract`](https://github.com/go-pdfkit/extract#tables) is where the rules
+are: a boundary is a stretch every row leaves empty, a repeated one-character
+cell is a bullet and not a column, and a line far below the last row is not the
+next one. Ruled lines are **not** read, so a table held apart by rules rather
+than by whitespace is not found.
+
+⛔ **A page that could not be read is said on the error stream**, not left to
+look like a page with no tables on it — and on the error stream rather than
+standard output, so that it cannot end up inside the rows somebody is about to
+parse.
+
+⛔ **The first row becomes the Markdown header.** A pipe table has nowhere to
+put a table with no header row, and a grid found by looking at alignment does
+not know whether its first row is one. The cells go through
+[go-richdoc](https://github.com/go-richdoc/markdown) rather than through a
+`strings.Join` here, so a cell holding a `|` is escaped by the code that
+already knew it had to be.
+
+⛔ **A document may say a word sits 10^308 points along**, and a table with one
+word at minus that and another at plus it is infinitely wide. JSON has no
+spelling for an infinity, so `-as json` **fails** on such a file rather than
+writing `"width": +Inf` into something that has already begun parsing it.
 
 `textcolour` paints the text one colour and leaves the rest of the page alone.
 
