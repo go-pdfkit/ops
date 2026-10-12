@@ -68,6 +68,8 @@ pdfops tables -as md -pages 3 accounts.pdf
 pdfops tables -as json -to tables/ accounts.pdf
 pdfops markdown report.pdf > report.md
 pdfops markdown -json report.pdf > report-for-indexing.json
+pdfops word report.pdf report.docx
+pdfops excel accounts.pdf accounts.xlsx
 pdfops images paper.pdf pictures/
 pdfops attachments report.pdf
 pdfops attachments -to files/ report.pdf
@@ -378,6 +380,27 @@ order mark — which is most of what a modern producer writes — came out of th
 old code as `\xfe\xffL\x00a\x00…`. `info` printed it that way too, for as long
 as the verb had existed; both now go through
 [`reader.TextString`](https://github.com/go-pdfkit/reader).
+
+`word` and `excel` write that same reading out as a `.docx` or an `.xlsx`,
+through [`go-ooxml`](https://github.com/go-ooxml/ooxml).
+
+```sh
+pdfops word report.pdf report.docx
+pdfops excel accounts.pdf accounts.xlsx
+```
+
+⛔ **What comes out is the document, not the pages.** The fonts, the margins,
+the line breaks and the page breaks are the typesetter's work; a `.docx` that
+reproduced them would be a picture of a PDF rather than something anybody can
+edit.
+
+⛔ **`excel` writes only the tables**, one sheet each. A spreadsheet is a grid
+of cells and a document is not, so the prose around a table has nowhere to go
+— and a page with no tables gives the one empty sheet a workbook has to have
+rather than an error.
+
+Both are the same function with a different writer, which is why `-pages`
+means the same thing in each and a defect found in one is fixed in both.
 
 `textcolour` paints the text one colour and leaves the rest of the page alone.
 
