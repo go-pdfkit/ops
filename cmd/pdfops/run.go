@@ -78,6 +78,7 @@ var commands = []command{
 	{"markdown", "[-pages <range>] [-json] <in.pdf>", "read the pages back as a document: headings, lists and tables", runMarkdown},
 	{"word", "[-pages <range>] <in.pdf> <out.docx>", "write the pages back out as a Word document", runWord},
 	{"excel", "[-pages <range>] <in.pdf> <out.xlsx>", "write the pages' tables out as a workbook", runExcel},
+	{"objects", "<in.pdf>", "write the object graph as JSON: what the file is made of", runObjects},
 	{"images", "[-pages <range>] <in.pdf> <out-directory>", "write out the pictures the pages place", runImages},
 	{"attachments", "[-to <directory>] <in.pdf>", "list the files the document carries, or write them out", runAttachments},
 	{"attach", "-file <path> [-as <name>] [-description <text>] <in.pdf> <out.pdf>", "carry a file inside the document", runAttach},
