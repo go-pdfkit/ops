@@ -70,6 +70,7 @@ pdfops markdown report.pdf > report.md
 pdfops markdown -json report.pdf > report-for-indexing.json
 pdfops word report.pdf report.docx
 pdfops excel accounts.pdf accounts.xlsx
+pdfops objects broken.pdf | jq .
 pdfops images paper.pdf pictures/
 pdfops attachments report.pdf
 pdfops attachments -to files/ report.pdf
@@ -401,6 +402,28 @@ rather than an error.
 
 Both are the same function with a different writer, which is why `-pages`
 means the same thing in each and a defect found in one is fixed in both.
+
+`objects` writes the object graph as JSON: what the file is **made of**, as
+opposed to what it says. For looking at a file that will not open anywhere
+else.
+
+```sh
+pdfops objects broken.pdf | jq '.objects["12 0"]'
+```
+
+⛔ **It is the graph reachable from the trailer**, not every object in the
+file. That is the honest set because it is the one a reader sees: an object no
+reference points at is in the bytes and in nobody's document.
+
+⛔ **A stream's bytes are not in it**, its length and its dictionary are. They
+are the bulk of most files and they are binary, so including them would mean
+base64 — a 35 MB file becoming a 47 MB JSON nobody reads.
+
+A name keeps its slash (`"/Catalog"`) and a string is wrapped
+(`{"text": "…"}` or `{"hex": "…"}` where it is not text), because the two have
+to be told apart and a PDF string may be exactly `/Catalog`. A reference that
+could not be read is **named** in `unread` rather than dropped: "the graph,
+and these edges lead nowhere" is what somebody debugging a damaged file needs.
 
 `textcolour` paints the text one colour and leaves the rest of the page alone.
 
