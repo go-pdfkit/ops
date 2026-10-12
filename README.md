@@ -66,6 +66,8 @@ pdfops text -layout -json paper.pdf
 pdfops tables accounts.pdf
 pdfops tables -as md -pages 3 accounts.pdf
 pdfops tables -as json -to tables/ accounts.pdf
+pdfops markdown report.pdf > report.md
+pdfops markdown -json report.pdf > report-for-indexing.json
 pdfops images paper.pdf pictures/
 pdfops attachments report.pdf
 pdfops attachments -to files/ report.pdf
@@ -345,6 +347,37 @@ already knew it had to be.
 word at minus that and another at plus it is infinitely wide. JSON has no
 spelling for an infinity, so `-as json` **fails** on such a file rather than
 writing `"width": +Inf` into something that has already begun parsing it.
+
+`markdown` reads the pages back as a **document** — headings, paragraphs, lists
+and tables — through
+[`go-pdfkit/document`](https://github.com/go-pdfkit/document), and writes them
+as Markdown. With `-json` it writes one record per page instead, each the
+page's Markdown plus the document's own metadata, which is the shape a
+retrieval pipeline already expects.
+
+```sh
+pdfops markdown report.pdf > report.md
+pdfops markdown -pages 3-7 report.pdf
+pdfops markdown -json report.pdf > report-for-indexing.json
+```
+
+⛔ **A PDF has no headings.** What this writes is an inference from how big the
+glyphs were and where they sat, and `document`'s README says what it will and
+will not see — a page in columns, or a table held apart by ruled lines, is not
+read as either.
+
+⛔ **A page range is applied after the document is read, never before.** What
+counts as a heading is decided by the sizes the *whole document* uses, so
+asking for page nine alone would otherwise give it different headings from
+asking for all of them — and a caller doing a document a page at a time would
+get a different answer for every page. A test asserts that page one reads the
+same both ways.
+
+⛔ **`-json` decodes the metadata.** A title written in UTF-16 behind a byte
+order mark — which is most of what a modern producer writes — came out of the
+old code as `\xfe\xffL\x00a\x00…`. `info` printed it that way too, for as long
+as the verb had existed; both now go through
+[`reader.TextString`](https://github.com/go-pdfkit/reader).
 
 `textcolour` paints the text one colour and leaves the rest of the page alone.
 

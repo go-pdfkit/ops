@@ -4,9 +4,10 @@ go 1.27.1
 
 require (
 	github.com/go-gfx/gfx v0.34.1
-	github.com/go-pdfkit/extract v0.6.0
+	github.com/go-pdfkit/document v0.1.0
+	github.com/go-pdfkit/extract v0.9.0
 	github.com/go-pdfkit/forms v0.5.0
-	github.com/go-pdfkit/reader v0.8.0
+	github.com/go-pdfkit/reader v0.9.0
 	github.com/go-pdfkit/render v0.67.2
 	github.com/go-pdfkit/xfa v0.22.0
 	github.com/go-richdoc/markdown v0.10.0

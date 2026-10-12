@@ -75,6 +75,7 @@ var commands = []command{
 	{"permissions", "<in.pdf>", "say how the file is protected and what it allows", runPermissions},
 	{"text", "[-pages <range>] [-layout] [-json] <in.pdf>", "read the text off the pages", runText},
 	{"tables", "[-pages <range>] [-as csv|json|md] [-to <directory>] <in.pdf>", "find the grids the text lines up into", runTables},
+	{"markdown", "[-pages <range>] [-json] <in.pdf>", "read the pages back as a document: headings, lists and tables", runMarkdown},
 	{"images", "[-pages <range>] <in.pdf> <out-directory>", "write out the pictures the pages place", runImages},
 	{"attachments", "[-to <directory>] <in.pdf>", "list the files the document carries, or write them out", runAttachments},
 	{"attach", "-file <path> [-as <name>] [-description <text>] <in.pdf> <out.pdf>", "carry a file inside the document", runAttach},
@@ -381,7 +382,11 @@ func runInfo(c *context, args []string) error {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		if s, ok := reader.ToString(info[reader.Name(k)]); ok {
+		// ⛔ TextString and not ToString. This printed
+		// "creator \xfe\xffL\x00a\x00T\x00e\x00X" for as long as the verb has
+		// existed: the bytes of a text string are not text, and UTF-16 behind
+		// a byte order mark is what most producers write.
+		if s, ok := reader.TextString(info[reader.Name(k)]); ok {
 			fmt.Fprintf(c.out, "%-10s %s\n", strings.ToLower(k), s)
 		}
 	}
