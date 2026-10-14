@@ -10,8 +10,8 @@ github.com/go-images/jpeg2000 v0.13.3 h1:GSnkQWQ72ANwfi/xYWt3za9Nfss+C1iBbk4uubL
 github.com/go-images/jpeg2000 v0.13.3/go.mod h1:r07D0wUJxBPZcsLTkLFt3OkL3DubrH6DsmRjJRnZYlo=
 github.com/go-ooxml/ooxml v0.3.1 h1:l01KL/cRNVz3uyav5P6THinewgR483dMQE1lq6G1OkU=
 github.com/go-ooxml/ooxml v0.3.1/go.mod h1:1lP6/YsrlUhXxXJiZkVCFzPyjuex3kIJ5XO+Sy1aF38=
-github.com/go-ooxml/opc v0.2.0 h1:qdd3jPmPA6c8tT2CH0x9Jc0Wsj3lXIE3+cvQUvDJB8Y=
-github.com/go-ooxml/opc v0.2.0/go.mod h1:WCilIcfGDpa5sRf2uNbXFKYg7MCog6I00ahuWTWXUyw=
+github.com/go-ooxml/opc v0.2.1 h1:nmdBy61n4M84wLcq/6duANaebB2FOLNCwJOu2E2A87Y=
+github.com/go-ooxml/opc v0.2.1/go.mod h1:WCilIcfGDpa5sRf2uNbXFKYg7MCog6I00ahuWTWXUyw=
 github.com/go-opentype/fonts v0.12.0 h1:gjYYkbDZBK3JHpraakgGNnXdkGq8oADerhDYjC22ILQ=
 github.com/go-opentype/fonts v0.12.0/go.mod h1:Kiep7ojxxaR2ALFeB/akcFHQyl1gG5OLIobp8EzaZSA=
 github.com/go-opentype/opentype v0.15.0 h1:ioE3eCbNZavlk/w073J3uX5FKjqhgOHQw+wZZdJ+gE4=
