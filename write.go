@@ -225,6 +225,16 @@ func (d *Doc) borrowedExtras(w *reader.Writer, p Page, src reader.Dict) ([]byte,
 		content = append(content, flat...)
 		resources = mergeResources(resources, res)
 	}
+	// ⛔ The pictures come between the flattened annotations and the stamps,
+	// and the order is the answer to three questions nobody asks until it is
+	// wrong: a placed signature goes OVER the page it signs, OVER an
+	// annotation that was flattened into it, and UNDER a watermark that is
+	// meant to be over everything.
+	if len(p.pictures) > 0 {
+		pics, res := placedContent(w, p)
+		content = append(content, pics...)
+		resources = mergeResources(resources, res)
+	}
 	if len(p.marks) > 0 {
 		stamp, fonts, alpha := d.stampContent(p, d.sourceBox(p))
 		content = append(content, stamp...)

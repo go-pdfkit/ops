@@ -339,6 +339,14 @@ func TestCountingWhatAJPEGSaysItHolds(t *testing.T) {
 		{"the scan before any frame", []byte{0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02}, 0, false},
 		{"segments that run out before a frame", []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02}, 0, false},
 		{"nothing but the start", []byte{0xFF, 0xD8}, 0, false},
+		// ⛔ A JPEG's segments WITHOUT its start-of-image marker. A mutation
+		// sweep survived on that guard, and the reason it survives is that
+		// the caller also asks a sniffer whether the bytes are a JPEG, so the
+		// check is doubled one layer down. This function's own answer still
+		// has to be no: the bytes it says yes to go into the PDF UNDECODED,
+		// with a colour space chosen from this count.
+		{"the frame of a JPEG whose start marker was replaced",
+			append([]byte{0xFF, 0x00}, grey[2:]...), 0, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got, ok := jpegComponents(c.in)

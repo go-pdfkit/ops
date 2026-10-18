@@ -267,14 +267,22 @@ func writeMatrix(w *bytes.Buffer, m [6]float64) {
 // whatever places it need only scale and translate. A page's rotation is
 // baked into the form's matrix here, exactly as a viewer would apply it.
 func (d *Doc) asForm(w *reader.Writer, p Page) reader.Ref {
-	if len(p.marks) > 0 && !p.blank && p.tiles == nil {
+	// ⛔ PICTURES COUNT HERE AS MARKS DO. A borrowed page with something drawn
+	// on it has to be wrapped — the drawing goes on the wrapper and the page
+	// itself becomes a tile inside it — and this condition counted marks
+	// alone. A page carrying a placed picture went down the plain path and the
+	// picture was never drawn: not an error, just an absence, which is the
+	// half of this that nothing noticed for as long as only XFA fed it.
+	if (len(p.marks) > 0 || len(p.pictures) > 0) && !p.blank && p.tiles == nil {
 		inner := p
 		inner.marks = nil
+		inner.pictures = nil
 		size := d.effectiveSize(p)
 		return d.asForm(w, Page{
-			size:  size,
-			marks: p.marks,
-			tiles: []tile{{from: inner, matrix: [6]float64{1, 0, 0, 1, 0, 0}}},
+			size:     size,
+			marks:    p.marks,
+			pictures: p.pictures,
+			tiles:    []tile{{from: inner, matrix: [6]float64{1, 0, 0, 1, 0, 0}}},
 		})
 	}
 	// A page drawn many times is written once. Poster is the verb that makes
@@ -296,11 +304,18 @@ func (d *Doc) asForm(w *reader.Writer, p Page) reader.Ref {
 	}
 	box := [4]float64{0, 0, p.size[0], p.size[1]}
 	switch {
-	case p.blank:
-	case p.tiles != nil || len(p.marks) > 0:
+	// ⛔ WHAT IS DRAWN COMES FIRST, and the blank case after it. The other way
+	// round — which is how this stood — a blank page that CARRIES something
+	// emitted an empty form: `blank` then `number` then `nup` lost the page
+	// numbers, and a signature placed on a made page vanished the same way.
+	// Nothing failed, which is why nothing noticed; the sheet simply came out
+	// empty where the drawing was. "Blank" has to mean nothing is on it, not
+	// that nothing was on it to start with.
+	case p.tiles != nil || len(p.marks) > 0 || len(p.pictures) > 0:
 		var res reader.Dict
 		content, res = d.madeContent(w, p, [4]float64{0, 0, p.size[0], p.size[1]})
 		extra["Resources"] = res
+	case p.blank:
 	default:
 		content, _ = p.src.PageContent(p.number)
 		page, _ := p.src.Page(p.number)
@@ -327,7 +342,12 @@ func (d *Doc) asForm(w *reader.Writer, p Page) reader.Ref {
 // are exactly what the form's content, resources, BBox and Matrix are built
 // from below.
 func formKey(p Page) (string, bool) {
-	if p.src == nil || p.tiles != nil || p.picture != nil || p.blank || len(p.marks) > 0 {
+	// ⛔ A page with a PLACED PICTURE is not cacheable either, for the same
+	// reason a marked one is not: the key says nothing about what was drawn on
+	// it, so two pages of the same source — one signed, one not — would share
+	// one form and the signature would appear on both, or on neither.
+	if p.src == nil || p.tiles != nil || p.picture != nil || p.blank ||
+		len(p.marks) > 0 || len(p.pictures) > 0 {
 		return "", false
 	}
 	return fmt.Sprintf("%p|%d|%d|%v|%v", p.src, p.number, p.rotate, p.media, p.crop), true

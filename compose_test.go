@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"sort"
@@ -637,5 +638,43 @@ func TestARotatedBlankPage(t *testing.T) {
 	}
 	if got := d.effectiveSize(d.pages[0]); got != [2]float64{200, 100} {
 		t.Errorf("effective size = %v", got)
+	}
+}
+
+// ⛔ A blank page CARRYING something, composed into another page. Found while
+// placing a picture on a made page, and the control showed it was never about
+// pictures: a stamp went the same way, so `blank` then `number` then `nup`
+// dropped the page numbers off the sheet. The form-writing switch tested
+// "blank" before it tested "has anything on it", and blank won.
+func TestABlankPageCarriesItsDrawingIntoAForm(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		draw  func(*Doc) error
+		token string
+	}{
+		{"a stamp", func(d *Doc) error {
+			return d.Stamp("1", Stamp{Text: "WITNESSXYZ", Size: 12})
+		}, "WITNESSXYZ"},
+		{"a placed picture", func(d *Doc) error {
+			return d.Place("1", Placement{Data: redSquare(t), Width: 40})
+		}, "/PdfopsIm0"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d := New()
+			d.Blank(200, 100)
+			if err := c.draw(d); err != nil {
+				t.Fatal(err)
+			}
+			if err := d.NUp(2); err != nil {
+				t.Fatal(err)
+			}
+			out, err := d.Bytes()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Contains(out, []byte(c.token)) {
+				t.Errorf("%s on a blank page was lost when the page was composed onto a sheet", c.name)
+			}
+		})
 	}
 }

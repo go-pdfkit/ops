@@ -10,6 +10,7 @@ import (
 	"compress/zlib"
 	"encoding/binary"
 	"fmt"
+	"math"
 
 	"github.com/go-gfx/gfx/codec"
 	"github.com/go-gfx/gfx/raster"
@@ -138,20 +139,46 @@ type placedPicture struct {
 	// rect is where it goes, in the page's own coordinates: x, y of the
 	// bottom left, then width and height.
 	rect [4]float64
+	// opacity is how much of the page shows through, zero being opaque. It is
+	// spelt the way a Stamp's is and shares its ExtGState names, so a page
+	// carrying both a pale picture and pale text carries one state per value
+	// rather than one per thing drawn.
+	opacity float64
 }
 
-// placedContent draws a page's placed images, under everything else.
+// placedContent draws a page's placed images.
+//
+// ⛔ ON TOP of the page's own content, not under it. This comment used to say
+// "under everything else", and the code has always appended AFTER the base
+// content — in madeContent for a page this package built and in borrowedExtras
+// for one it borrowed. A signature under the scan it signs would be invisible,
+// so the order matters and the comment was wrong about what the code does.
 func placedContent(w *reader.Writer, p Page) ([]byte, reader.Dict) {
 	var buf bytes.Buffer
 	xobjects := reader.Dict{}
+	alpha := map[string]float64{}
 	for i, pl := range p.pictures {
 		name := reader.Name(fmt.Sprintf("PdfopsIm%d", i))
 		xobjects[name] = writePicture(w, pl.pic)
-		fmt.Fprintf(&buf, "q %s 0 0 %s %s %s cm /%s Do Q\n",
+		buf.WriteString("q ")
+		if pl.opacity > 0 && pl.opacity < 1 {
+			// ⛔ The same condition and the same NAME a stamp uses, so a page
+			// carrying a pale picture and pale text of the same alpha carries
+			// one state between them. Opacity here is the alpha, as it is
+			// there: zero is unset and therefore opaque.
+			gs := fmt.Sprintf("PdfopsA%d", int(math.Round(pl.opacity*1000)))
+			alpha[gs] = pl.opacity
+			fmt.Fprintf(&buf, "/%s gs ", gs)
+		}
+		fmt.Fprintf(&buf, "%s 0 0 %s %s %s cm /%s Do Q\n",
 			number(pl.rect[2]), number(pl.rect[3]),
 			number(pl.rect[0]), number(pl.rect[1]), name)
 	}
-	return buf.Bytes(), reader.Dict{"XObject": xobjects}
+	res := reader.Dict{"XObject": xobjects}
+	if len(alpha) > 0 {
+		res = mergeResources(res, stampResources(nil, alpha))
+	}
+	return buf.Bytes(), res
 }
 
 // jpegComponents reports how many colour channels a JPEG declares, reading the

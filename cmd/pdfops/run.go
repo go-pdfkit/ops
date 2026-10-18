@@ -58,6 +58,7 @@ var commands = []command{
 	{"number", "-format <text> <in.pdf> <out.pdf>", "write page numbers at the foot", runNumber},
 	{"bates", "-prefix <text> -start <n> <in.pdf> <out.pdf>", "stamp a running serial, exhibit style", runBates},
 	{"stamp", "-text <words> -at <place> <in.pdf> <out.pdf>", "draw a line of text where you say", runStamp},
+	{"place", "-image <file> [-at <place> | -x <pt> -y <pt>] <in.pdf> <out.pdf>", "draw a picture where you say: a signature, a logo", runPlace},
 	{"info", "<in.pdf>", "print what the file says about itself", runInfo},
 	{"metadata", "(-set <Key=value> … | -clear) <in.pdf> <out.pdf>", "write what the file says about itself", runMetadata},
 	{"version", "-set <version> <in.pdf> <out.pdf>", "set the PDF version the file declares", runVersion},
@@ -660,6 +661,60 @@ func runStamp(c *context, args []string) error {
 		Text: *text, Font: font, Size: *size, Rotate: *rotate,
 		Opacity: *opacity, Position: pos,
 	}); err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+// runPlace draws a picture on the pages a range names: a signature, a logo, a
+// stamp that is an image rather than a line of text.
+//
+// ⛔ -x and -y are an ANCHOR and not a nudge. Giving either one means the
+// picture goes exactly there, in the page's own points from its bottom left,
+// and -at is then ignored — rather than the two being combined, which is the
+// shape that makes a caller guess which one won.
+func runPlace(c *context, args []string) error {
+	fs := flags("place")
+	pages := fs.String("pages", "all", "the pages to draw on")
+	image := fs.String("image", "", "the picture to draw: png, jpeg, gif, tiff, bmp, webp or psd")
+	at := fs.String("at", "center", "where to put it: "+positionNames())
+	x := fs.Float64("x", -1, "points from the left edge, instead of -at")
+	y := fs.Float64("y", -1, "points from the bottom edge, instead of -at")
+	width := fs.Float64("width", 0, "how wide, in points; the height follows unless given")
+	height := fs.Float64("height", 0, "how tall, in points; the width follows unless given")
+	dpi := fs.Float64("dpi", 0, "size it from its own pixels instead; 0 means 72")
+	margin := fs.Float64("margin", 0, "distance from the edge for -at, in points; 0 means 24")
+	opacity := fs.Float64("opacity", 1, "from zero to one, where one is opaque")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	if *image == "" {
+		return fmt.Errorf("place needs -image: the picture to draw")
+	}
+	pos, ok := positions[strings.ToLower(*at)]
+	if !ok {
+		return fmt.Errorf("%q is not a place; try one of %s", *at, positionNames())
+	}
+	data, err := os.ReadFile(*image)
+	if err != nil {
+		return err
+	}
+	p := ops.Placement{
+		Data: data, Position: pos, Margin: *margin,
+		Width: *width, Height: *height, DPI: *dpi, Opacity: *opacity,
+	}
+	if *x >= 0 || *y >= 0 {
+		p.Anchored = true
+		p.At = [2]float64{max(*x, 0), max(*y, 0)}
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.Place(*pages, p); err != nil {
 		return err
 	}
 	return save(d, fs.Arg(1))
