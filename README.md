@@ -53,6 +53,8 @@ pdfops watermark -text CONFIDENTIAL contract.pdf marked.pdf
 pdfops number -format "{page} of {pages}" report.pdf numbered.pdf
 pdfops bates -prefix ACME- -start 1 exhibits.pdf stamped.pdf
 pdfops stamp -text "seen 25 August" -at top-right -bold notes.pdf seen.pdf
+pdfops place -image signature.png -at bottom-right -width 120 contract.pdf signed.pdf
+pdfops place -image logo.png -x 40 -y 740 -dpi 300 -opacity 0.3 plain.pdf headed.pdf
 pdfops sanitize downloaded.pdf safe.pdf
 pdfops flatten filled-form.pdf final.pdf
 pdfops strip -annotations -bookmarks private.pdf clean.pdf
@@ -178,6 +180,47 @@ range, because the reversal absorbs the difference. It passed at the ceiling
 **and at the floor**, so it proved nothing; the negative control is what said
 so, and the assertion now uses `-keep-backs`, where the split is load-bearing.
 
+
+`place` draws a **picture** where you say it goes: a scanned or typed
+signature, a logo, a seal. It is `stamp` with an image instead of a line of
+text, and it deliberately takes the same words for where — the nine positions
+and a margin — so that `-at bottom-right` means the same thing for both.
+
+```sh
+pdfops place -image signature.png -at bottom-right -width 120 contract.pdf signed.pdf
+pdfops place -image logo.png -pages 1 -x 40 -y 740 -dpi 300 plain.pdf headed.pdf
+pdfops place -image seal.png -at center -opacity 0.3 draft.pdf sealed.pdf
+```
+
+Three ways of saying how big, and they are tried in that order: `-width` or
+`-height` alone **keeps the picture's proportions** (a signature scaled into a
+box is a signature nobody recognises), both together may distort it, and
+neither falls back to `-dpi` — the picture's own pixels, where 300 means a
+300-pixel-wide picture is an inch across. The default is 72, one point per
+pixel.
+
+⛔ **`-x -y` is an anchor, not a hint: it is taken as given and not clamped
+into the page**, and `-at` is then ignored rather than combined with it. A
+signature deliberately bleeding off the edge of a scanned form is a real
+request, and a viewer clips what falls outside the media box perfectly well.
+The nine positions clamp; an explicit corner is an instruction.
+
+⛔ **This is what "sign a PDF" means in every tool that offers it** — a picture
+of a signature, placed. It is not cryptography, and nothing here pretends it
+is: a drawn squiggle proves nothing about who drew it. The cryptographic kind
+is a different job under a different name, and conflating the two is how a
+scanned squiggle comes to be called a digital signature.
+
+⛔ **The drawing itself was already here, and nothing could ask for it.** The
+machinery that puts an image at a rectangle on a page was written for the XFA
+renderer, and only XFA fed it: the capability was present, tested through one
+caller, and absent from the outside. Worse, a borrowed page did not honour it
+at all, because the conditions deciding whether a source page is wrapped or
+cached counted marks and not pictures. Wiring it up found a second defect of
+the same shape in `nup`: a **blank** page that carries anything emitted an
+empty form, because the switch asked "is it blank" before it asked "is
+anything on it" — so `blank` then `number` then `nup` dropped the page
+numbers off the sheet, silently, and had always done.
 
 `repair` writes a file back out with its structure rebuilt, and says whether
 rebuilding was needed. `-check` answers that question and writes nothing.
