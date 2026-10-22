@@ -75,8 +75,13 @@ func (d *Doc) Bytes() ([]byte, error) {
 	for i, p := range d.pages {
 		built[i] = builtPage{src: p.src, num: p.number, ref: refs[i], dict: dicts[i]}
 	}
+	// The widgets of any added fields go onto the page dictionaries before they
+	// are put down, and their field objects are handed to the catalogue, which
+	// is the only place that knows whether there is already a form to join.
+	added := d.addedFields(w, refs, dicts)
+
 	catalog := reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef}
-	d.keepCatalogue(w, catalog, kept, built)
+	d.keepCatalogue(w, catalog, kept, built, added)
 
 	kids := make(reader.Array, 0, len(d.pages))
 	for i := range d.pages {

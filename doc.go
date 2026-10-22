@@ -12,6 +12,7 @@ package ops
 import (
 	"fmt"
 
+	"github.com/go-pdfkit/forms"
 	"github.com/go-pdfkit/reader"
 )
 
@@ -31,6 +32,11 @@ type Doc struct {
 	// bookmarks over: a document assembled rather than merged has an outline
 	// of its caller's rather than of anybody else's.
 	outline []Bookmark
+
+	// addFields are form fields to put into the document, held until the write
+	// because a widget names the page OBJECT it sits on and the pages have no
+	// object numbers until then. See [Doc.AddFields].
+	addFields []forms.Field
 
 	// labels is one page label per page, and labelsSet says the caller has
 	// decided them — including deciding there are none, which is why the two

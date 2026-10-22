@@ -86,6 +86,7 @@ var commands = []command{
 	{"detach", "-name <name> <in.pdf> <out.pdf>", "drop a file the document carries", runDetach},
 	{"fields", "<in.pdf>", "list what a form asks for and what it holds", runFields},
 	{"fill", "-set <name>=<value> [-set ...] <in.pdf> <out.pdf>", "fill in a form and save it", runFill},
+	{"addfields", "-fields <description.json> <in.pdf> <out.pdf>", "put new form fields into a document", runAddFields},
 	{"xfa", "<in.pdf> <out.pdf>", "draw the form inside a file whose pages are a placeholder", runXFA},
 }
 
