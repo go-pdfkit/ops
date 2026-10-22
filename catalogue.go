@@ -103,7 +103,7 @@ var sensitiveKeys = map[reader.Name]bool{"Metadata": true}
 //     nothing above them, as it already did for the catalogue and the form.
 
 // keepCatalogue carries across what the source document said about itself.
-func (d *Doc) keepCatalogue(w *reader.Writer, catalog reader.Dict, kept *keptAnnots, built []builtPage) {
+func (d *Doc) keepCatalogue(w *reader.Writer, catalog reader.Dict, kept *keptAnnots, built []builtPage, added reader.Array) {
 	src, ok := d.singleSource()
 	if !ok {
 		// Pages from several files have several catalogues, and there is no
@@ -112,6 +112,12 @@ func (d *Doc) keepCatalogue(w *reader.Writer, catalog reader.Dict, kept *keptAnn
 		// nothing above them — except the files it was handed, which belong to
 		// no page and so cannot be in conflict.
 		d.keepAttachments(w, catalog)
+		// Fields this package was ASKED for are not in that conflict: they
+		// come from the caller rather than from any source, so a merged
+		// document can still be given a form of its own.
+		if len(added) > 0 {
+			catalog["AcroForm"] = w.Add(acroFormFor(w, nil, added))
+		}
 		return
 	}
 	// A document that opened has a catalogue; one that somehow came back
@@ -125,7 +131,11 @@ func (d *Doc) keepCatalogue(w *reader.Writer, catalog reader.Dict, kept *keptAnn
 			catalog[key] = w.Copy(src, v)
 		}
 	}
-	if form := d.keepForm(w, src, source, kept); form != nil {
+	form := d.keepForm(w, src, source, kept)
+	if len(added) > 0 {
+		form = acroFormFor(w, form, added)
+	}
+	if form != nil {
 		catalog["AcroForm"] = w.Add(form)
 	}
 	if tree := d.keepStructure(w, src, source, kept, built); tree != nil {

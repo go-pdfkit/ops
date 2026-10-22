@@ -8,7 +8,7 @@ require (
 	github.com/go-ooxml/opc v0.2.1
 	github.com/go-pdfkit/document v0.1.0
 	github.com/go-pdfkit/extract v0.9.0
-	github.com/go-pdfkit/forms v0.5.0
+	github.com/go-pdfkit/forms v0.6.0
 	github.com/go-pdfkit/reader v0.9.0
 	github.com/go-pdfkit/render v0.69.0
 	github.com/go-pdfkit/xfa v0.22.0
