@@ -4,6 +4,7 @@ go 1.27.2
 
 require (
 	github.com/go-gfx/gfx v0.36.1
+	github.com/go-images/images v0.2.0
 	github.com/go-ooxml/ooxml v0.5.0
 	github.com/go-ooxml/opc v0.2.1
 	github.com/go-pdfkit/document v0.1.0

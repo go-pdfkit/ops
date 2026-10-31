@@ -147,6 +147,45 @@ Three more things it will not do:
 And `-list` writes nothing and takes no output file, because the first thing
 anybody should do with a tool that deletes pages is ask it which ones it means.
 
+`deskew` straightens the tilted pages of a scan. It **draws** each page to
+measure it, and reports every page's angle and whether it was turned.
+
+```sh
+pdfops deskew -list scan.pdf              # just the angles, write nothing
+pdfops deskew scan.pdf straight.pdf
+pdfops deskew -threshold 0.1 -dpi 300 scan.pdf straight.pdf
+```
+
+The angle comes from **Baird's projection profile** (*The skew angle of printed
+documents*, Proc. SPSE 1987): the page is sheared rather than rotated — which
+keeps the scan-line counts exact, where resampling would blur the very line
+structure being measured — and the angle taken is the one that maximises the
+variance of the marked-pixel count per scan line. The survey that compares the
+methods (Mascaro, Cavalcanti *et al.*, *Pattern Recognition Letters* **31**
+(2010) 1403–1411) ranks it first on documents with clear separation between
+text lines, which is what a page of text is.
+
+⛔ **The correction is not a rasterisation.** The angle is measured on a render,
+but it is applied as a transformation of the page's own content, so text stays
+text and a vector drawing stays vector. A deskew that flattened the page would
+quietly undo the thing a scan is usually deskewed *for*, which is OCR.
+
+Judged by tesseract, which knows nothing of this code: a rendered page it reads
+at 0.968 similarity straight, and at 0.895 tilted by 7°, it reads back at
+**0.968** once deskewed — the straight page's own figure.
+
+A page under `-threshold` is reported and left alone, byte for byte: a scan
+that is already level should not come back rewritten. A page with nothing on it
+has no skew, and is reported as such rather than counted as level — one blank
+separator sheet does not stop the other three hundred being straightened.
+
+⛔ **`-dpi` is a measurement setting only**, since nothing of the render reaches
+the output: a higher value buys accuracy and costs time, and never quality. Too
+*low* a value does silent damage, though — the projection has to resolve the
+text lines, and below about two samples per line pitch it returns an angle that
+is simply wrong. See `SkewOptions.MaxPixels` in go-images for the measured
+table.
+
 ⛔ `divide` makes the **same grid** as `poster` and is the opposite operation.
 `poster` keeps every piece the size of the page it came from, so it
 **enlarges**: the pieces taped together make one page the size of a wall.
