@@ -249,6 +249,63 @@ func TestDeskewAtEachDocumentedDPI(t *testing.T) {
 	}
 }
 
+func TestSkewAnglesRefusesWhatItCannotRead(t *testing.T) {
+	if _, err := SkewAngles([]byte("not a pdf at all"), DeskewOptions{}); err == nil {
+		t.Error("a file that is not a PDF was accepted")
+	}
+}
+
+func TestSkewAnglesRefusesADocumentItCannotMeasureAtAll(t *testing.T) {
+	// ⛔ ONE PAGE FAILING IS A REPORT; EVERY PAGE FAILING IS AN ERROR, or a
+	// caller who checks the error — the normal way to drive this — is told the
+	// measurement was done. Two causes, because they take different paths: a
+	// render that cannot happen at all, and pages with nothing on them.
+	t.Run("a DPI no renderer will accept", func(t *testing.T) {
+		found, err := SkewAngles(scanLikePDF(t, 3), DeskewOptions{DPI: 100000})
+		if err == nil {
+			t.Fatal("a DPI of 100000 was accepted")
+		}
+		// The report still comes back with it, naming each page.
+		if len(found) != 1 || found[0].Err == nil {
+			t.Errorf("the per-page report should survive the error: %+v", found)
+		}
+		if !strings.Contains(err.Error(), "not one of the 1 pages") {
+			t.Errorf("error was %v", err)
+		}
+	})
+	t.Run("pages with nothing on them", func(t *testing.T) {
+		d, err := Open(scanLikePDF(t, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.Blank(612, 792)
+		d.Blank(612, 792)
+		d.Delete("1") // leave only the two blanks
+		pdf, err := d.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := SkewAngles(pdf, DeskewOptions{}); err == nil {
+			t.Error("a document of nothing but blank pages was accepted")
+		}
+	})
+}
+
+func TestDeskewPassesOnWhatItCannotDo(t *testing.T) {
+	// An empty document cannot be written, and Deskew has to say so rather
+	// than report on nothing.
+	var empty Doc
+	if _, err := empty.Deskew(DeskewOptions{}); err == nil {
+		t.Error("a document of no pages was accepted")
+	}
+	// And a document it can write but cannot measure fails too.
+	var blanks Doc
+	blanks.Blank(612, 792)
+	if _, err := blanks.Deskew(DeskewOptions{}); err == nil {
+		t.Error("a document of one blank page was accepted")
+	}
+}
+
 func TestRotateAboutCentreKeepsTheCentre(t *testing.T) {
 	// The one property of the matrix that can be checked in isolation; the
 	// direction it turns is checked by TestDeskewStraightensARealRender,
