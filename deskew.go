@@ -135,6 +135,27 @@ func SkewAngles(pdf []byte, opt DeskewOptions) ([]PageSkew, error) {
 		}
 		out = append(out, PageSkew{Page: i, Angle: angle})
 	}
+
+	// ⛔ ONE PAGE FAILING IS A REPORT; EVERY PAGE FAILING IS AN ERROR. Found
+	// by a CLI test: asked for a DPI no renderer will accept, this reported a
+	// failure for every page and returned nil, so the command printed a list
+	// of failures, wrote the file out unchanged and exited 0. A caller who
+	// checks the exit status — which is the normal way to drive a command —
+	// was told the deskewing had been done.
+	//
+	// It is the same rule DropBlank keeps for a document that is blank all the
+	// way through: a result that applies to every page is a result about the
+	// document.
+	failed := 0
+	for _, p := range out {
+		if p.Err != nil {
+			failed++
+		}
+	}
+	if failed > 0 && failed == len(out) {
+		return out, fmt.Errorf("ops: not one of the %d pages could be measured; the first says: %w",
+			len(out), out[0].Err)
+	}
 	return out, nil
 }
 
@@ -154,9 +175,16 @@ func (d *Doc) Deskew(opt DeskewOptions) ([]PageSkew, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(found) != len(d.pages) {
-		return nil, fmt.Errorf("ops: measured %d pages of a document of %d", len(found), len(d.pages))
-	}
+	// ⛔ NO CHECK THAT THE COUNTS AGREE, AND NONE THAT A PAGE HAS A SIZE. Both
+	// were here and both were branches no test could reach, which this
+	// package already has a word about in blank.go: a rule stated twice is a
+	// rule that will disagree with itself.
+	//
+	// SkewAngles measured the bytes this Doc has just written, so there is one
+	// entry per page by construction. And a page with no size does not render,
+	// so it already carries an Err from the loop above and is skipped below —
+	// the "defence" could only fire for a page that both rendered and has no
+	// size, which is a contradiction.
 	threshold := opt.threshold()
 	for i := range found {
 		if found[i].Err != nil || math.Abs(found[i].Angle) < threshold {
@@ -164,10 +192,6 @@ func (d *Doc) Deskew(opt DeskewOptions) ([]PageSkew, error) {
 		}
 		p := d.pages[i]
 		size := d.effectiveSize(p)
-		if size[0] <= 0 || size[1] <= 0 {
-			found[i].Err = fmt.Errorf("page %d has no size, so it cannot be turned", i+1)
-			continue
-		}
 		d.pages[i] = Page{
 			size:  size,
 			tiles: []tile{{from: p, matrix: rotateAboutCentre(-found[i].Angle, size)}},
