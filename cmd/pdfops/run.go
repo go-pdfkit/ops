@@ -51,6 +51,7 @@ var commands = []command{
 	{"poster", "-across <n> -down <n> <in.pdf> <out.pdf>", "cut each page into tiles, to print larger than the paper", runPoster},
 	{"divide", "-across <n> -down <n> <in.pdf> <out.pdf>", "cut each page into smaller pages of its own content", runDivide},
 	{"deblank", "[-max-ink <fraction>] [-dpi <n>] [-list] <in.pdf> [out.pdf]", "find the pages that hold nothing, and drop them", runDeblank},
+	{"deskew", "[-threshold <degrees>] [-dpi <n>] [-list] <in.pdf> [out.pdf]", "straighten the tilted pages of a scan", runDeskew},
 	{"overlay", "-with <mark.pdf> <in.pdf> <out.pdf>", "draw another file over these pages", runOverlay},
 	{"underlay", "-with <mark.pdf> <in.pdf> <out.pdf>", "draw another file beneath these pages", runUnderlay},
 	{"blank", "-before <page> <in.pdf> <out.pdf>", "insert an empty page", runBlank},
@@ -1727,6 +1728,74 @@ func runDivide(c *context, args []string) error {
 		return err
 	}
 	return save(d, fs.Arg(1))
+}
+
+// runDeskew measures how far each page is tilted and turns the crooked ones
+// back.
+//
+// ⛔ -list takes no output file, for the same reason -list exists on deblank:
+// the first thing to do with a tool that rewrites every page is to ask it what
+// it thinks it has found. It is also the whole tool for anybody who only wants
+// the angles — a page's tilt is worth knowing even when nothing is to be done
+// about it.
+func runDeskew(c *context, args []string) error {
+	fs := flags("deskew")
+	threshold := fs.Float64("threshold", 0, "degrees of tilt below which a page is left alone; 0 means 0.5")
+	dpi := fs.Float64("dpi", 0, "how finely to draw each page to measure it; 0 means 150")
+	list := fs.Bool("list", false, "report each page's tilt and write nothing")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	want, usage := 2, "<in.pdf> <out.pdf>"
+	if *list {
+		want, usage = 1, "<in.pdf>"
+	}
+	if err := wantArgs(fs, want, usage); err != nil {
+		return err
+	}
+	opt := ops.DeskewOptions{Threshold: *threshold, DPI: *dpi}
+
+	report := func(found []ops.PageSkew) {
+		corrected := 0
+		for _, p := range found {
+			switch {
+			case p.Err != nil:
+				fmt.Fprintf(c.out, "page %d: %v\n", p.Page, p.Err)
+			case p.Corrected:
+				fmt.Fprintf(c.out, "page %d: %+.2f° corrected\n", p.Page, p.Angle)
+				corrected++
+			default:
+				fmt.Fprintf(c.out, "page %d: %+.2f°\n", p.Page, p.Angle)
+			}
+		}
+		fmt.Fprintf(c.out, "%d page(s), %d corrected\n", len(found), corrected)
+	}
+
+	if *list {
+		pdf, err := os.ReadFile(fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		found, err := ops.SkewAngles(pdf, opt)
+		if err != nil {
+			return err
+		}
+		report(found)
+		return nil
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	found, err := d.Deskew(opt)
+	if err != nil {
+		return err
+	}
+	if err := save(d, fs.Arg(1)); err != nil {
+		return err
+	}
+	report(found)
+	return nil
 }
 
 // runDeblank finds the pages that hold nothing and drops them.
