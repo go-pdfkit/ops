@@ -52,7 +52,7 @@ func (d *Doc) Picture(data []byte, dpi float64) error {
 	if dpi <= 0 {
 		dpi = 72
 	}
-	p, err := readPicture(data)
+	p, err := readPicture(data, d.maxPixels)
 	if err != nil {
 		return err
 	}
@@ -64,17 +64,40 @@ func (d *Doc) Picture(data []byte, dpi float64) error {
 	return nil
 }
 
+// SetMaxPixels sets the largest picture, as width times height, that
+// [Doc.Picture] and [Doc.Place] will decode. Zero, the default, means
+// codec.DefaultMaxPixels (40 million: a 40 megapixel image); a negative value
+// is treated as zero.
+//
+// ⛔ The number the ceiling guards comes from the FILE: a compressed format
+// describes a large image in a few bytes, so a PNG declaring 100000 by 100000
+// is tens of kilobytes and tens of gigabytes once decoded. A 50 megapixel
+// camera photo is refused by the default; a caller who takes photographs from
+// people they trust can raise it here, and one taking files from strangers
+// should lower it to what they actually need. A picture above the ceiling is
+// refused with an error for which errors.Is(err, codec.ErrTooLarge) holds.
+func (d *Doc) SetMaxPixels(n int) {
+	if n < 0 {
+		n = 0
+	}
+	d.maxPixels = n
+}
+
 // readPicture works out how an image will be carried.
 //
 // Every format is decoded, even the one that is then carried undecoded, because
 // the page has to be the size of the picture and only the picture says what
 // that is.
-func readPicture(data []byte) (*picture, error) {
+//
+// maxPixels is the ceiling on width times height, checked from the header
+// before anything is allocated; zero means [codec.DefaultMaxPixels]. A picture
+// above it is refused with an error wrapping [codec.ErrTooLarge].
+func readPicture(data []byte, maxPixels int) (*picture, error) {
 	format := codec.Sniff(data)
 	if format == codec.Unknown {
 		return nil, fmt.Errorf("ops: these bytes are not a picture in any format that can be read")
 	}
-	img, err := codec.Decode(data)
+	img, err := codec.DecodeWith(data, codec.Options{MaxPixels: maxPixels})
 	if err != nil {
 		return nil, fmt.Errorf("ops: this picture cannot be read: %w", err)
 	}

@@ -68,6 +68,10 @@ type Doc struct {
 	packed  bool
 	protect *reader.Encryption
 
+	// maxPixels is the ceiling on a picture handed to [Doc.Picture] or
+	// [Doc.Place]; zero means codec.DefaultMaxPixels. See [Doc.SetMaxPixels].
+	maxPixels int
+
 	// forms are the page-forms already written during the write in progress,
 	// so a page drawn many times is embedded once. Made in [Doc.Bytes] and
 	// dropped with it: a reader.Ref belongs to the writer that issued it, and

@@ -687,6 +687,7 @@ func runPlace(c *context, args []string) error {
 	dpi := fs.Float64("dpi", 0, "size it from its own pixels instead; 0 means 72")
 	margin := fs.Float64("margin", 0, "distance from the edge for -at, in points; 0 means 24")
 	opacity := fs.Float64("opacity", 1, "from zero to one, where one is opaque")
+	maxPixels := fs.Int("max-pixels", 0, "refuse a picture of more than this many pixels; 0 means 40 million")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -716,6 +717,7 @@ func runPlace(c *context, args []string) error {
 	if err != nil {
 		return err
 	}
+	d.SetMaxPixels(*maxPixels)
 	if err := d.Place(*pages, p); err != nil {
 		return err
 	}
