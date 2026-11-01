@@ -107,7 +107,12 @@ func TestPlaceVerb(t *testing.T) {
 		t.Error("page two was not drawn on")
 	}
 
+	if code, _, msg := exec("place", "-image", sig, "-max-pixels", "100000000", in, ranged); code != 0 {
+		t.Fatalf("place -max-pixels raised: code %d: %s", code, msg)
+	}
+
 	for _, args := range [][]string{
+		{"place", "-image", sig, "-max-pixels", "1", in, out}, // over the ceiling
 		{"place", in},
 		{"place", "-nosuchflag", in, out},
 		{"place", in, out}, // no -image

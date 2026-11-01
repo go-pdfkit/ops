@@ -238,6 +238,18 @@ neither falls back to `-dpi` — the picture's own pixels, where 300 means a
 300-pixel-wide picture is an inch across. The default is 72, one point per
 pixel.
 
+⛔ **A picture above 40 megapixels is refused, and the ceiling is yours to move.**
+The size a picture declares comes from the file, and a compressed format
+describes a huge image in a few bytes — a PNG saying 100000 by 100000 is tens
+of kilobytes that become tens of gigabytes — so `go-gfx/gfx` v0.37.0 reads the
+header first and refuses what is over `codec.DefaultMaxPixels` (40 million)
+before allocating anything. A 50 MP camera photo is therefore refused by
+default, with an error wrapping `codec.ErrTooLarge`. In Go, `(*Doc).SetMaxPixels(n)`
+sets the ceiling for `Doc.Picture` and `Doc.Place` (width times height; zero
+means the default, and a picture exactly at the ceiling is accepted); on the
+command line `pdfops place -max-pixels 60000000 …`. Raise it for photographs
+you trust; lower it to what you need for files from strangers.
+
 ⛔ **`-x -y` is an anchor, not a hint: it is taken as given and not clamped
 into the page**, and `-at` is then ignored rather than combined with it. A
 signature deliberately bleeding off the edge of a scanned form is a real

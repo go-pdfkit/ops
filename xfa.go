@@ -485,7 +485,7 @@ func xfaPicture(b xfa.Box, pageHeight float64) (*placedPicture, string) {
 	if err != nil {
 		return nil, "its picture is not the base64 it says it is"
 	}
-	pic, err := readPicture(raw)
+	pic, err := readPicture(raw, 0)
 	if err != nil {
 		return nil, "its picture cannot be read: " + err.Error()
 	}

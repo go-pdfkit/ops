@@ -94,7 +94,7 @@ func (d *Doc) Place(spec string, p Placement) error {
 	if p.Opacity < 0 || p.Opacity > 1 {
 		return fmt.Errorf("ops: an opacity of %g, which is outside zero to one", p.Opacity)
 	}
-	pic, err := readPicture(p.Data)
+	pic, err := readPicture(p.Data, d.maxPixels)
 	if err != nil {
 		return err
 	}
