@@ -3,17 +3,17 @@ module github.com/go-pdfkit/ops
 go 1.27.2
 
 require (
-	github.com/go-gfx/gfx v0.37.0
-	github.com/go-images/images v0.2.0
-	github.com/go-ooxml/ooxml v0.6.0
+	github.com/go-gfx/gfx v0.41.0
+	github.com/go-images/images v0.3.0
+	github.com/go-ooxml/ooxml v0.7.0
 	github.com/go-ooxml/opc v0.2.1
 	github.com/go-pdfkit/document v0.1.0
 	github.com/go-pdfkit/extract v0.9.0
 	github.com/go-pdfkit/forms v0.6.0
-	github.com/go-pdfkit/reader v0.9.0
+	github.com/go-pdfkit/reader v0.10.0
 	github.com/go-pdfkit/render v0.69.1
 	github.com/go-pdfkit/xfa v0.22.0
-	github.com/go-richdoc/markdown v0.10.0
+	github.com/go-richdoc/markdown v0.11.0
 	github.com/go-richdoc/richdoc v0.7.0
 )
 
@@ -26,7 +26,7 @@ require (
 	github.com/go-pdfkit/pdffont v0.4.0 // indirect
 	github.com/go-simd/highway v0.0.14 // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
-	github.com/yuin/goldmark v1.8.6 // indirect
+	github.com/yuin/goldmark v1.8.7 // indirect
 	golang.org/x/image v0.47.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 )
