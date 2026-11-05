@@ -74,6 +74,8 @@ pdfops word report.pdf report.docx
 pdfops excel accounts.pdf accounts.xlsx
 pdfops objects broken.pdf | jq .
 pdfops images paper.pdf pictures/
+pdfops links report.pdf
+pdfops links -pages 1-3 report.pdf
 pdfops attachments report.pdf
 pdfops attachments -to files/ report.pdf
 pdfops attach -file figures.csv -description "the figures" report.pdf with.pdf
@@ -91,6 +93,34 @@ A page range is written `1-3,7,10-` and may say `all`, `even`, `odd` or
 reverses three pages and `select -pages 1,1` gives you two copies.
 
 `-password` opens an encrypted file.
+
+`links` lists what the document's pages link to — a page of the same document,
+or an address — with the rectangle each link occupies, in the document's **own**
+page numbering. Reorder the pages or drop one and the list says where the links
+lead *now*, not where they led in the file they came from.
+
+```text
+1    72,648,232,660    page 14
+1    72,600,180,612    https://example.org/
+3    90,120,300,132    nowhere
+```
+
+(the columns are tab-separated)
+
+⛔ **A link that leads nowhere this can follow is listed, and says so.** It is a
+link all the same: a page the document no longer has, a jump into another file,
+a destination name nothing defines, or an action that runs something instead of
+going somewhere. Printing only the ones that work would answer "eleven" about a
+file holding twelve, and a listing that under-reports is worse than none —
+whoever is auditing a document for what it points at would never learn that the
+twelfth exists.
+
+⛔ **`/A` is read before `/Dest`.** The link-annotation clause (ISO 32000-1
+§12.5.6.5, Table 173) does not permit `/Dest` beside an `/A`, so a file carrying
+both is malformed — and the action is what a reader acts on, so it is what this
+reports. A rectangle written from either pair of corners is normalised, because
+a caller hit-testing a back-to-front one finds nothing at all, which looks
+exactly like a page with no links on it.
 
 `interleave` takes one page from each file in turn, which is how two
 single-sided scans — the fronts and the backs — become one double-sided
