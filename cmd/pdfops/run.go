@@ -82,6 +82,7 @@ var commands = []command{
 	{"excel", "[-pages <range>] <in.pdf> <out.xlsx>", "write the pages' tables out as a workbook", runExcel},
 	{"objects", "<in.pdf>", "write the object graph as JSON: what the file is made of", runObjects},
 	{"images", "[-pages <range>] <in.pdf> <out-directory>", "write out the pictures the pages place", runImages},
+	{"links", "[-pages <range>] <in.pdf>", "list the links the document carries and where each one leads", runLinks},
 	{"attachments", "[-to <directory>] <in.pdf>", "list the files the document carries, or write them out", runAttachments},
 	{"attach", "-file <path> [-as <name>] [-description <text>] <in.pdf> <out.pdf>", "carry a file inside the document", runAttach},
 	{"detach", "-name <name> <in.pdf> <out.pdf>", "drop a file the document carries", runDetach},
