@@ -892,6 +892,59 @@ renders the page and looks at the pixels:
 And the marks are flagged Print, for the same reason a widget is: without it a
 highlight vanishes the moment somebody prints what they marked up.
 
+## Redacting text: removing it, not covering it
+
+`Doc.Redact` takes the text inside a region **out of the page's content
+stream**. ISO 32000-1 §12.5.6.23, on applying a redaction:
+
+> Conforming readers that support redaction annotations shall provide a
+> mechanism for applying content removal, and they shall **remove all traces**
+> of the specified content. If a portion of an image is contained in a
+> redaction region, that portion of the image data **shall be destroyed**;
+> clipping or image masks shall not be used to hide that data.
+
+⛔ **A black rectangle is not a redaction.** It is the standard data leak: the
+text is still in the content stream, so anyone's copy and paste — or
+`pdfops text` — reads it straight back out from under the box. So the test that
+decides whether this is a redaction at all is not about how the page looks, it
+is that **the redacted string does not appear in the bytes that come out**, and
+a drawn rectangle fails it.
+
+The operator that drew the text is overwritten with spaces of its own length,
+which does two things at once: the string is gone from the stream, and every
+offset after it is still where it was, so the text that stays **does not move**.
+`extract.Run.Op` says which bytes to overwrite — deciding which glyphs are
+inside a region is work `extract` already does, and a second implementation of
+it here would cut the document somewhere other than where the caller was told
+the text was.
+
+The region is then painted over, because an area that was emptied and not
+marked cannot be told from one that was always blank. That paint is a
+*marking*, not the redaction: the text is already gone when it is drawn.
+
+⛔ **And it refuses rather than half-redacts**, naming the page and the reason.
+A caller who is told can choose another region or another tool; a caller who is
+not told believes the document safe to send. It refuses a region holding:
+
+| what | why |
+| --- | --- |
+| text inside a Form XObject | the bytes are not the page's, and an XObject is **shared** — cleaning one page would change every page that draws it. `RecolourText` stops at the same wall |
+| an image | the spec is explicit that a mask or a clip will not do and the pixels must be destroyed; re-encoding an image with them overwritten is not in this release |
+| an annotation | its own `/Contents` can hold the very words being redacted |
+| an operator only **part** of whose text is inside the region | blanking it would remove text nobody asked about, and the surviving words cannot simply be re-emitted: the bytes in the stream are font codes, and Unicode does not round-trip back to them through a CID font's map. Keeping the survivors' original bytes and replacing the removed ones with an equivalent kern is the way, and it is next |
+| text that **reaches outside** the region | a run is the unit that can be removed, so a producer drawing a whole line with one `Tj` makes that line the run — and redacting one word of it would take the line. That is not a leak, which is why it is tempting to allow; it is the other way a redaction betrays its caller, by removing what they did not ask about and not saying so. A region is allowed to miss a run's own box by up to two points, because a caller mapping a lit rectangle back into page space arrives through screen pixels |
+
+The refusal happens when `Redact` is **called**, not when the document is
+written — by the time of `Bytes` the caller has already been promised a
+redacted document by everything in between.
+
+A redaction also survives the rest of the verbs. That is worth saying because
+the write path once dropped a rewritten content stream whenever it stamped a
+page: for a recolouring that loses a colour, but for a redaction it would put
+the removed text back and draw the fill over it, so the document would **look
+redacted and not be**. There is a test that redacts and watermarks the same
+page and then looks for the string.
+
 A document assembled from several files can still be given a form: two sources'
 forms cannot be merged — their fields may be named the same — but fields the
 caller *asked for* come from neither source and so are in no conflict.

@@ -76,6 +76,11 @@ type Doc struct {
 	// [Doc.Place]; zero means codec.DefaultMaxPixels. See [Doc.SetMaxPixels].
 	maxPixels int
 
+	// redactErr is set during a write when a page that was to be redacted
+	// could not be, and makes [Doc.Bytes] fail rather than hand back a
+	// document that looks redacted. Cleared at the start of every write.
+	redactErr error
+
 	// forms are the page-forms already written during the write in progress,
 	// so a page drawn many times is embedded once. Made in [Doc.Bytes] and
 	// dropped with it: a reader.Ref belongs to the writer that issued it, and
@@ -113,6 +118,12 @@ type Page struct {
 	// in. A pointer rather than a value with a flag beside it, because black
 	// is a colour somebody asks for.
 	recolour *[3]float64
+
+	// redactions are the regions of this page whose content is to be REMOVED
+	// from its stream, and the colour painted over each once it is gone. They
+	// are checked for what cannot be removed when Redact is called rather than
+	// when the document is written: see [Doc.Redact].
+	redactions []Redaction
 }
 
 // Open reads a PDF file held in memory, with the empty password.
