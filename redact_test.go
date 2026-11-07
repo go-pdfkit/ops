@@ -253,10 +253,62 @@ func TestRedactingRefusesWhatItCannotRemove(t *testing.T) {
 	// One operator drawing both what goes and what stays.
 	t.Run("an operator it would half-erase", func(t *testing.T) {
 		const body = "BT /F1 10 Tf 20 100 Td [(keep) -2000 (drop)] TJ ET"
-		// The region covers the second word only.
-		r := Redaction{Page: 1, Quads: []Quad{QuadOf(63, 95, 99, 115)}}
+		// ⛔ The region covers the second word WHOLLY and the first not at all:
+		// "keep" is drawn at x 20..40, the kern moves the pen 20 points, and
+		// "drop" is drawn at x 60..80. A quad that clipped "drop" instead would
+		// be refused for reaching outside the region — a different rule, which
+		// is what this fixture said until it was measured.
+		r := Redaction{Page: 1, Quads: []Quad{QuadOf(58, 95, 85, 115)}}
 		assertRefused(t, secretPage(t, body, nil), r, "would remove both")
 	})
+
+	// ⛔⛔ AND A RUN THAT REACHES OUTSIDE THE REGION. A producer that draws a
+	// whole line with one Tj makes that line the run, so redacting one word of
+	// it would take the line. Not a leak — the other betrayal, where more goes
+	// than was asked and nothing says so.
+	t.Run("text that reaches outside the region", func(t *testing.T) {
+		const body = "BT /F1 10 Tf 20 100 Td (a whole line in one operation) Tj ET"
+		// A region over the first few letters only.
+		r := Redaction{Page: 1, Quads: []Quad{QuadOf(18, 97, 40, 113)}}
+		assertRefused(t, secretPage(t, body, nil), r, "reaches outside the region")
+	})
+}
+
+// ⛔ AND THE SLACK IS ENOUGH FOR A REGION THAT WAS MEASURED RATHER THAN TYPED.
+// The workbench maps a lit rectangle back into page space through screen
+// pixels, so its quad is a fraction of a point out in each direction. A region
+// that misses the run's own box by less than that must still redact it,
+// otherwise the one caller this was built for is refused every time.
+func TestARegionOffByLessThanAPointStillRedacts(t *testing.T) {
+	// The run is at x 20..50, y 100..110. This quad is inside that on every
+	// side by a point and a half — a measured region, not a typed one.
+	r := Redaction{Page: 1, Quads: []Quad{QuadOf(21.5, 101.5, 48.5, 108.5)}}
+	d, err := Open(secretPage(t, "BT /F1 10 Tf 20 100 Td (secret) Tj ET", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Redact(r); err != nil {
+		t.Fatalf("a region measured off by a point was refused: %v", err)
+	}
+	out, err := d.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, content := range contentsOf(t, out) {
+		if strings.Contains(content, "secret") {
+			t.Errorf("page %d still holds the redacted string", i+1)
+		}
+	}
+	// And a region genuinely short of the run — by more than the slack — is
+	// refused rather than quietly taking the whole run.
+	far := Redaction{Page: 1, Quads: []Quad{QuadOf(26, 103, 44, 107)}}
+	d2, err := Open(secretPage(t, "BT /F1 10 Tf 20 100 Td (secret) Tj ET", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d2.Redact(far); err == nil {
+		t.Error("a region well inside the run's own box took the whole run")
+	}
 }
 
 // assertRefused checks that Redact says no, and says why.

@@ -186,6 +186,19 @@ func unremovableText(page int, runs []extract.Run, quads []Quad) error {
 			return fmt.Errorf("ops: page %d draws %q from an operation this cannot locate in the stream",
 				page, summarise(run.Text))
 		}
+		// ⛔⛔ AND THE RUN MUST BE WHOLLY INSIDE THE REGION. A run is the unit
+		// that can be removed, so a run that merely OVERLAPS the region would
+		// be blanked entire — and a producer that draws a whole line with one
+		// Tj makes that line the run. Redacting one word of such a line would
+		// take the line. That is not a leak, which is why it is tempting to
+		// allow; it is the other way a redaction betrays its caller, by
+		// removing what they did not ask about and not saying so.
+		if !runInside(run, quads) {
+			return fmt.Errorf("ops: on page %d the text %q reaches outside the region, and the "+
+				"operation that draws it can only be removed whole, which would take text "+
+				"the region does not cover",
+				page, summarise(run.Text))
+		}
 	}
 	// A text-showing operator whose text is partly inside the region and partly
 	// outside cannot be blanked without taking away what was not asked for.
@@ -224,6 +237,33 @@ func bySpan(runs []extract.Run) map[extract.Span][]extract.Run {
 // baseline and the size above it, which is what a line of text occupies.
 func runTouches(r extract.Run, quads []Quad) bool {
 	return overlaps(r.X, r.Y, r.X+r.Width, r.Y+r.Size, quads)
+}
+
+// runSlack is how far a run's box may stand outside a quad and still count as
+// inside it.
+//
+// ⛔ IT IS A MEASUREMENT, NOT A FUDGE. A caller that asks for the region a run
+// occupies — the workbench, mapping a lit rectangle back into page space —
+// arrives with a quad derived from screen pixels, so it is a fraction of a
+// point out in each direction, and more at a zoom below 1:1. Two points is
+// under half a line of ten-point text, so a run from the line above or below
+// can never be swallowed by it, and the ordinary case of "this exact run" is
+// not refused for a rounding error.
+const runSlack = 2.0
+
+// runInside says whether a run's box lies wholly within one of the quads, which
+// is what makes the run's operator safe to blank whole.
+func runInside(r extract.Run, quads []Quad) bool {
+	for _, q := range quads {
+		qx0 := min(q.TopLeftX, q.BottomLeftX) - runSlack
+		qx1 := max(q.TopRightX, q.BottomRightX) + runSlack
+		qy0 := min(q.BottomLeftY, q.BottomRightY) - runSlack
+		qy1 := max(q.TopLeftY, q.TopRightY) + runSlack
+		if r.X >= qx0 && r.X+r.Width <= qx1 && r.Y >= qy0 && r.Y+r.Size <= qy1 {
+			return true
+		}
+	}
+	return false
 }
 
 // overlaps says whether a box meets any of the quads, each taken as its own
@@ -295,7 +335,12 @@ func redactedSpans(src *reader.Document, page int, rs []Redaction) (map[extract.
 			if run.Op.Empty() || run.InForm {
 				continue
 			}
-			if runTouches(run, r.Quads) {
+			// ⛔ INSIDE, the same test the refusal above uses. If these two
+			// ever disagreed, the pair would be the defect: a run the check
+			// passed over and this blanked would remove text nobody asked
+			// about, and a run the check allowed and this skipped would be left
+			// on the page under the fill.
+			if runInside(run, r.Quads) {
 				spans[run.Op] = true
 			}
 		}

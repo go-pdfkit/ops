@@ -932,6 +932,7 @@ not told believes the document safe to send. It refuses a region holding:
 | an image | the spec is explicit that a mask or a clip will not do and the pixels must be destroyed; re-encoding an image with them overwritten is not in this release |
 | an annotation | its own `/Contents` can hold the very words being redacted |
 | an operator only **part** of whose text is inside the region | blanking it would remove text nobody asked about, and the surviving words cannot simply be re-emitted: the bytes in the stream are font codes, and Unicode does not round-trip back to them through a CID font's map. Keeping the survivors' original bytes and replacing the removed ones with an equivalent kern is the way, and it is next |
+| text that **reaches outside** the region | a run is the unit that can be removed, so a producer drawing a whole line with one `Tj` makes that line the run — and redacting one word of it would take the line. That is not a leak, which is why it is tempting to allow; it is the other way a redaction betrays its caller, by removing what they did not ask about and not saying so. A region is allowed to miss a run's own box by up to two points, because a caller mapping a lit rectangle back into page space arrives through screen pixels |
 
 The refusal happens when `Redact` is **called**, not when the document is
 written — by the time of `Bytes` the caller has already been promised a
