@@ -128,6 +128,42 @@ func (d *Doc) checkRedactable(p *Page, r Redaction) error {
 				r.Page)
 		}
 	}
+	// ⛔⛔ THE ANNOTATIONS THIS DOCUMENT HAS ADDED COUNT TOO, and reading only
+	// the source page missed them. Held until the write, because a widget and a
+	// markup annotation both name the page OBJECT they sit on, they are not in
+	// p.src at all — so a caller that marked a passage and then redacted it got
+	// the text removed and the annotation kept, with the marked-up words still
+	// in the file as that annotation's own note. The workbench walked straight
+	// into it: highlight a line, then decide to redact it.
+	for _, m := range d.marks {
+		if m.Page != p.number {
+			continue
+		}
+		for _, q := range m.Quads {
+			x0, y0, x1, y1 := q.bounds()
+			if overlaps(x0, y0, x1, y1, r.Quads) {
+				return fmt.Errorf("ops: page %d carries a mark this document has added across "+
+					"the region, and its own note can hold the words being redacted: drop "+
+					"the mark first", r.Page)
+			}
+		}
+	}
+	// ⛔ A field's places are its WIDGETS, each with its own page: one field can
+	// show on several pages, so the field is not the thing with a position.
+	for _, f := range d.addFields {
+		for _, wdg := range f.Widgets {
+			if wdg.Page != p.number {
+				continue
+			}
+			x0, y0 := min(wdg.Rect[0], wdg.Rect[2]), min(wdg.Rect[1], wdg.Rect[3])
+			x1, y1 := max(wdg.Rect[0], wdg.Rect[2]), max(wdg.Rect[1], wdg.Rect[3])
+			if overlaps(x0, y0, x1, y1, r.Quads) {
+				return fmt.Errorf("ops: page %d carries a form field this document has added "+
+					"across the region, and a field holds a value of its own: drop the "+
+					"field first", r.Page)
+			}
+		}
+	}
 	page, _ := p.src.Page(p.number)
 	if annots, ok := resolveArray(p.src, page.Get("Annots")); ok {
 		for _, a := range annots {

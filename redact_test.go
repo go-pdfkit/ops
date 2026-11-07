@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/go-pdfkit/extract"
+	"github.com/go-pdfkit/forms"
 	"github.com/go-pdfkit/reader"
 )
 
@@ -233,7 +234,8 @@ func TestRedactingRefusesWhatItCannotRemove(t *testing.T) {
 		assertRefused(t, pdf, overSecret(), "image")
 	})
 
-	// An annotation: its own contents can hold the words being redacted.
+	// An annotation the file already carries: its own contents can hold the
+	// words being redacted.
 	t.Run("an annotation across the region", func(t *testing.T) {
 		d, err := Open(secretPage(t, twoLines, nil))
 		if err != nil {
@@ -248,6 +250,87 @@ func TestRedactingRefusesWhatItCannotRemove(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertRefused(t, out, overSecret(), "annotation")
+	})
+
+	// ⛔⛔ AND ONE THIS DOCUMENT HAS ADDED BUT NOT YET WRITTEN. Marks and
+	// widgets are held until the write, because each names the page OBJECT it
+	// sits on — so they are not in the source at all, and reading only the
+	// source missed them. The workbench walked straight into it: highlight a
+	// line, then decide to redact it, and the text went while the note that
+	// quoted it stayed.
+	t.Run("a mark this document has added", func(t *testing.T) {
+		d, err := Open(secretPage(t, twoLines, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Mark(Markup{Page: 1, Kind: MarkHighlight,
+			Quads: []Quad{QuadOf(20, 98, 60, 112)}, Note: "the secret, again"}); err != nil {
+			t.Fatal(err)
+		}
+		err = d.Redact(overSecret())
+		if err == nil {
+			t.Fatal("a redaction under a mark this document had added was accepted")
+		}
+		if !strings.Contains(err.Error(), "drop the mark first") {
+			t.Errorf("the refusal says %q", err)
+		}
+		// A mark somewhere else on the page is nobody's business.
+		d2, err := Open(secretPage(t, twoLines, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d2.Mark(Markup{Page: 1, Kind: MarkHighlight,
+			Quads: []Quad{QuadOf(20, 148, 60, 162)}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := d2.Redact(overSecret()); err != nil {
+			t.Errorf("a mark on another line stopped the redaction: %v", err)
+		}
+		// And a mark on another PAGE is not even looked at, however exactly it
+		// sits over the region's coordinates — a page number is not a position.
+		d3, err := Open(secretPage(t, twoLines, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		d3.Blank(100, 200)
+		if err := d3.Mark(Markup{Page: 2, Kind: MarkHighlight,
+			Quads: []Quad{QuadOf(15, 95, 85, 115)}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := d3.Redact(overSecret()); err != nil {
+			t.Errorf("a mark on page 2 stopped a redaction on page 1: %v", err)
+		}
+	})
+
+	t.Run("a field this document has added", func(t *testing.T) {
+		d, err := Open(secretPage(t, twoLines, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d.AddFields(forms.Field{Name: "note", Kind: forms.Text,
+			Widgets: []forms.Widget{{Page: 1, Rect: [4]float64{20, 98, 60, 112}}}}); err != nil {
+			t.Fatal(err)
+		}
+		err = d.Redact(overSecret())
+		if err == nil {
+			t.Fatal("a redaction under a field this document had added was accepted")
+		}
+		if !strings.Contains(err.Error(), "drop the field first") {
+			t.Errorf("the refusal says %q", err)
+		}
+		// A widget on another page is not in the way, wherever it sits.
+		d2, err := Open(secretPage(t, twoLines, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		d2.Blank(100, 200)
+		if err := d2.AddFields(forms.Field{Name: "note", Kind: forms.Text,
+			Widgets: []forms.Widget{{Page: 2, Rect: [4]float64{20, 98, 60, 112}}}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := d2.Redact(overSecret()); err != nil {
+			t.Errorf("a field on page 2 stopped a redaction on page 1: %v", err)
+		}
 	})
 
 	// One operator drawing both what goes and what stays.
