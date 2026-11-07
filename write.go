@@ -79,6 +79,10 @@ func (d *Doc) Bytes() ([]byte, error) {
 	// are put down, and their field objects are handed to the catalogue, which
 	// is the only place that knows whether there is already a form to join.
 	added := d.addedFields(w, refs, dicts)
+	// The marks go on beside them, before the pages are put down: an annotation
+	// is attached to a page dictionary, and a page already written cannot be
+	// added to.
+	d.addedMarks(w, dicts)
 
 	catalog := reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef}
 	d.keepCatalogue(w, catalog, kept, built, added)
