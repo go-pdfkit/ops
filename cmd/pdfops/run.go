@@ -89,6 +89,7 @@ var commands = []command{
 	{"fields", "<in.pdf>", "list what a form asks for and what it holds", runFields},
 	{"fill", "-set <name>=<value> [-set ...] <in.pdf> <out.pdf>", "fill in a form and save it", runFill},
 	{"addfields", "-fields <description.json> <in.pdf> <out.pdf>", "put new form fields into a document", runAddFields},
+	{"mark", "-area <page:x0,y0,x1,y1> [-and ...] [-as highlight|underline|strikeout|squiggly] [-colour r,g,b] [-note <text>] <in.pdf> <out.pdf>", "mark text over the pages, leaving what is drawn on them alone", runMark},
 	{"xfa", "<in.pdf> <out.pdf>", "draw the form inside a file whose pages are a placeholder", runXFA},
 }
 

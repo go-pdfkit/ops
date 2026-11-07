@@ -844,6 +844,54 @@ Two details the format makes easy to get wrong, both held by tests:
 - **A widget is marked Print.** Without it the field is on screen and gone from
   the paper, which is where a filled form is most often looked at.
 
+## Marking text: `pdfops mark`
+
+`pdfops mark` writes the marks a reader makes **over** a page rather than on it
+— a highlight, an underline, a strikeout or a squiggly underline (ISO 32000-1,
+§12.5.6.10, Table 179).
+
+```sh
+$ pdfops mark -area 1:72,700,300,712 -note "worth coming back to" paper.pdf marked.pdf
+marked 1 area(s) as highlight
+
+$ pdfops mark -area 1:72,700,300,712 -and 1:72,686,250,698 -as underline paper.pdf marked.pdf
+marked 2 area(s) as underline
+```
+
+An area is `page:x0,y0,x1,y1` **in points, counting up from the foot of the
+page** — the space a PDF is written in. `-and` marks another area; each one
+becomes its own annotation, because a markup annotation's several
+quadrilaterals are for the several *lines of one selection* ("each quadrilateral
+shall encompass a word or group of contiguous words"), and two unrelated marks
+in one annotation would share a note, a colour and a date, and come off
+together.
+
+⛔ **The page's own content is not touched.** That is the whole reason to write
+an annotation rather than draw on the page: the glyphs underneath are unchanged,
+the mark comes off again by dropping the annotation, and a reader who wants the
+document as its author wrote it gets it.
+
+Three details the format makes easy to get wrong, each held by a test that
+renders the page and looks at the pixels:
+
+- **A mark with no appearance stream is invisible.** Table 179 says `/AP` *"shall
+  take precedence over QuadPoints"*; `go-pdfkit/render` draws an annotation
+  **only** from its appearance and skips one that has none. So a highlight
+  written with `QuadPoints` alone is a perfectly correct annotation that nothing
+  shows.
+- **A highlight is translucent, not multiplied.** Multiply is what a highlighter
+  physically is and what Acrobat writes, but `render` implements no blend modes
+  at all — a Multiply highlight paints an opaque block over the sentence it
+  marks. Constant alpha is understood everywhere and leaves the words legible.
+- **The vertex order follows Table 179's figure, not its prose.** The text says
+  the four vertices are "counterclockwise"; Figure 64 shows `(x1,y1)` and
+  `(x2,y2)` along the *top* edge and `(x3,y3)`, `(x4,y4)` along the bottom — a Z.
+  Every widely used reader follows the figure. The `Quad` type names its corners
+  rather than taking eight numbers, so the mistake cannot be made silently.
+
+And the marks are flagged Print, for the same reason a widget is: without it a
+highlight vanishes the moment somebody prints what they marked up.
+
 A document assembled from several files can still be given a form: two sources'
 forms cannot be merged — their fields may be named the same — but fields the
 caller *asked for* come from neither source and so are in no conflict.
