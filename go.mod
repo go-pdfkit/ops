@@ -8,7 +8,7 @@ require (
 	github.com/go-ooxml/ooxml v0.7.0
 	github.com/go-ooxml/opc v0.2.1
 	github.com/go-pdfkit/document v0.2.0
-	github.com/go-pdfkit/extract v0.9.0
+	github.com/go-pdfkit/extract v0.10.0
 	github.com/go-pdfkit/forms v0.6.0
 	github.com/go-pdfkit/reader v0.10.0
 	github.com/go-pdfkit/render v0.69.1
@@ -22,6 +22,7 @@ require (
 	github.com/breml/rootcerts v0.3.7 // indirect
 	github.com/dlclark/regexp2/v2 v2.5.2 // indirect
 	github.com/dop251/goja v0.0.0-20260926152631-39ec2650adc9 // indirect
+	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/evanw/esbuild v0.28.2 // indirect
 	github.com/go-browserhttp/browserhttp v0.2.0 // indirect
 	github.com/go-gfx/oksvg v0.2.0 // indirect
@@ -30,7 +31,7 @@ require (
 	github.com/go-images/jpeg2000 v0.14.0 // indirect
 	github.com/go-images/png v0.2.0 // indirect
 	github.com/go-opentype/fonts v0.14.0 // indirect
-	github.com/go-opentype/opentype v0.16.1 // indirect
+	github.com/go-opentype/opentype v0.17.0 // indirect
 	github.com/go-pdfkit/html2pdf v0.4.1 // indirect
 	github.com/go-pdfkit/pdffont v0.4.0 // indirect
 	github.com/go-pdfkit/pdfkit v0.20.0 // indirect

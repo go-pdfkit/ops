@@ -63,8 +63,16 @@ func (d *Doc) Bytes() ([]byte, error) {
 			}
 		}
 	}
+	d.redactErr = nil
 	for i, p := range d.pages {
 		dicts[i] = d.buildPage(w, p, pagesRef, where, kept)
+	}
+	// ⛔⛔ BEFORE ANYTHING IS HANDED BACK. A page whose redaction could not be
+	// applied has been built with its text still in it and the fill painted
+	// over the top — a document that looks redacted. The caller gets the
+	// failure instead of the file.
+	if d.redactErr != nil {
+		return nil, d.redactErr
 	}
 
 	// The catalogue is rebuilt before the pages are put down, not after: what
@@ -206,12 +214,17 @@ func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, whe
 	// ⛔ The recolouring happens BEFORE the decoration, and the order matters:
 	// a stamp's own colour is the stamp's business, so recolouring the page's
 	// text must not reach the marks this document put on top of it.
-	if p.recolour != nil {
-		if content, err := p.src.PageContent(p.number); err == nil {
-			out, unreached := recolourContent(content, *p.recolour)
-			d.unreached += unreached
-			copied["Contents"] = w.Add(contentStream(out, nil))
+	if out, rewritten, err := d.rewrittenContent(p); err != nil {
+		// ⛔ RECORDED, AND THE WHOLE WRITE FAILS ON IT. A page whose redaction
+		// could not be applied must not be written: the fill would be painted
+		// over text that is still there, and the caller would be holding a
+		// document that looks redacted. [Doc.Bytes] checks this before it
+		// returns anything.
+		if d.redactErr == nil {
+			d.redactErr = err
 		}
+	} else if rewritten {
+		copied["Contents"] = w.Add(contentStream(out, nil))
 	}
 
 	extra, resources := d.borrowedExtras(w, p, src)
@@ -249,6 +262,19 @@ func (d *Doc) borrowedExtras(w *reader.Writer, p Page, src reader.Dict) ([]byte,
 		content = append(content, stamp...)
 		resources = mergeResources(resources, stampResources(fonts, alpha))
 	}
+	// ⛔ THE REDACTION FILL IS LAST, OVER EVERYTHING, and it goes through here
+	// rather than being appended to the page's own rewritten bytes. Two reasons,
+	// both of which were a way to lose it: the page's content may end inside a
+	// clipping path, which would clip the fill away without a trace, and it may
+	// end having left a colour or a transform set. decorate wraps the page in a
+	// save and a restore, so whatever is added here starts from a clean state.
+	//
+	// It is a MARKING, not the redaction: the text is already gone from the
+	// stream by the time this is drawn. What it does is tell a reader that
+	// something was taken out, which an emptied region otherwise cannot say.
+	if len(p.redactions) > 0 {
+		content = append(content, redactionFill(p.redactions)...)
+	}
 	return content, resources
 }
 
@@ -264,8 +290,14 @@ func (d *Doc) decorate(w *reader.Writer, p Page, src, copied reader.Dict, extra 
 	// that away: a page both recoloured and watermarked came back in its
 	// original colours, and nothing failed. What is here is used when it is
 	// a rewritten stream and the source's parts otherwise.
+	//
+	// ⛔ A REDACTION REWRITES IT TOO, and leaving it out of this test would be
+	// the same defect with a worse ending: a page both redacted and stamped
+	// would come back with the redacted text still in it, and the fill drawn
+	// over it would make the document look redacted. A recolouring that is
+	// undone is a colour; a redaction that is undone is a leak.
 	var parts reader.Array
-	if rewritten, ok := copied["Contents"].(reader.Ref); ok && p.recolour != nil {
+	if rewritten, ok := copied["Contents"].(reader.Ref); ok && (p.recolour != nil || len(p.redactions) > 0) {
 		parts = reader.Array{rewritten}
 	} else {
 		parts = contentParts(w, p.src, src)
