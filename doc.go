@@ -49,6 +49,10 @@ type Doc struct {
 	notes    []Note
 	freeText []FreeText
 
+	// shapes are lines, rectangles and ellipses to draw over the pages, held
+	// until the write like the annotations above. See [Doc.AddShapes].
+	shapes []Shape
+
 	// labels is one page label per page, and labelsSet says the caller has
 	// decided them — including deciding there are none, which is why the two
 	// are separate: a nil labels with labelsSet is "remove the labels" and a

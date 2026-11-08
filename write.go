@@ -93,6 +93,7 @@ func (d *Doc) Bytes() ([]byte, error) {
 	d.addedMarks(w, dicts)
 	d.addedNotes(w, dicts)
 	d.addedFreeText(w, dicts)
+	d.addedShapes(w, dicts)
 
 	catalog := reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef}
 	d.keepCatalogue(w, catalog, kept, built, added)
