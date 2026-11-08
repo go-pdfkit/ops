@@ -92,6 +92,17 @@ func (d *Doc) Redact(rs ...Redaction) error {
 		if p.src == nil {
 			return fmt.Errorf("ops: page %d was made rather than read, so it carries no text to redact", r.Page)
 		}
+		// ⛔ The same refusal ReplaceText makes, from the other side. A rule
+		// enforced at only one of its two doors is a rule the caller meets or
+		// misses depending on the order they happened to call things in.
+		if len(p.textEdits) > 0 {
+			return fmt.Errorf("ops: the text of page %d is already being "+
+				"replaced, and one page cannot have its text replaced and be "+
+				"redacted in the same write: this scans the ORIGINAL stream for "+
+				"the operations to blank, and a replacement changes that "+
+				"stream's length. Write the document, open it again, and redact "+
+				"that", r.Page)
+		}
 		if err := d.checkRedactable(p, r); err != nil {
 			return err
 		}
@@ -399,10 +410,33 @@ func redactedSpans(src *reader.Document, page int, rs []Redaction) (map[extract.
 // this did before redaction existed and is no worse than a colour. For a
 // redaction it is a document that must not be written at all.
 func (d *Doc) rewrittenContent(p Page) (out []byte, rewritten bool, err error) {
-	if p.recolour == nil && len(p.redactions) == 0 {
+	if !p.rewroteContent() {
 		return nil, false, nil
 	}
 	content, cerr := pageContent(p.src, p.number)
+	// ⛔⛔ THE ORDER IS A FACT ABOUT OFFSETS, NOT A PREFERENCE, and a page may
+	// not carry both a redaction and a replacement at all — ReplaceText and
+	// Redact refuse the pair, for reasons the first of them explains. What is
+	// left is a sequence in which each step's spans are still true when it runs:
+	//
+	//   - a replacement CHANGES THE LENGTH of the stream, so every offset after
+	//     it moves. Its own spans came from a scan of these bytes, so it runs
+	//     before anything else edits them, and internally from the end
+	//     backwards.
+	//   - a redaction writes spaces over the same number of bytes, leaving every
+	//     offset where it was, and it re-scans the SOURCE for its spans — which
+	//     is exactly why it cannot follow a replacement, and why the pair is
+	//     refused rather than ordered.
+	//   - a recolouring INSERTS operators, so it is last whatever else happened.
+	if len(p.textEdits) > 0 {
+		edits, eerr := d.plannedEdits(p)
+		if cerr != nil || eerr != nil {
+			return nil, false, fmt.Errorf("ops: the text of page %d was to be "+
+				"replaced and its own content stream could not be read, so the "+
+				"replacement cannot be applied: %w", p.number, errors.Join(cerr, eerr))
+		}
+		content = editedContent(content, edits)
+	}
 	if len(p.redactions) > 0 {
 		spans, serr := redactedSpans(p.src, p.number, p.redactions)
 		if cerr != nil || serr != nil {
