@@ -91,6 +91,8 @@ func (d *Doc) Bytes() ([]byte, error) {
 	// is attached to a page dictionary, and a page already written cannot be
 	// added to.
 	d.addedMarks(w, dicts)
+	d.addedNotes(w, dicts)
+	d.addedFreeText(w, dicts)
 
 	catalog := reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef}
 	d.keepCatalogue(w, catalog, kept, built, added)

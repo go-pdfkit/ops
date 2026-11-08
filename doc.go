@@ -42,6 +42,13 @@ type Doc struct {
 	// write for the same reason as the widgets above. See [Doc.Mark].
 	marks []Markup
 
+	// notes and freeText are the annotations that say something of their own
+	// rather than marking what the page says — a sticky note and a text box.
+	// Held until the write, like the marks. See [Doc.AddNotes],
+	// [Doc.AddFreeText].
+	notes    []Note
+	freeText []FreeText
+
 	// labels is one page label per page, and labelsSet says the caller has
 	// decided them — including deciding there are none, which is why the two
 	// are separate: a nil labels with labelsSet is "remove the labels" and a

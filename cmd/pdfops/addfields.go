@@ -13,23 +13,23 @@ import (
 // forms.Field with the parts a file cannot carry left out, named as JSON
 // rather than as Go so that the file reads like what it describes.
 type fieldFile struct {
-	Name      string        `json:"name"`
-	Kind      string        `json:"kind"`
-	Value     string        `json:"value,omitempty"`
-	Values    []string      `json:"values,omitempty"`
-	Options   []optionFile  `json:"options,omitempty"`
-	MaxLen    int           `json:"maxLen,omitempty"`
-	Quadding  int           `json:"align,omitempty"`
-	ReadOnly  bool          `json:"readOnly,omitempty"`
-	Required  bool          `json:"required,omitempty"`
-	NoExport  bool          `json:"noExport,omitempty"`
-	Multiline bool          `json:"multiline,omitempty"`
-	Password  bool          `json:"password,omitempty"`
-	Comb      bool          `json:"comb,omitempty"`
-	Sorted    bool          `json:"sorted,omitempty"`
-	MultiSel  bool          `json:"multiSelect,omitempty"`
-	Editable  bool          `json:"editable,omitempty"`
-	Widgets   []widgetFile  `json:"widgets"`
+	Name      string       `json:"name"`
+	Kind      string       `json:"kind"`
+	Value     string       `json:"value,omitempty"`
+	Values    []string     `json:"values,omitempty"`
+	Options   []optionFile `json:"options,omitempty"`
+	MaxLen    int          `json:"maxLen,omitempty"`
+	Quadding  int          `json:"align,omitempty"`
+	ReadOnly  bool         `json:"readOnly,omitempty"`
+	Required  bool         `json:"required,omitempty"`
+	NoExport  bool         `json:"noExport,omitempty"`
+	Multiline bool         `json:"multiline,omitempty"`
+	Password  bool         `json:"password,omitempty"`
+	Comb      bool         `json:"comb,omitempty"`
+	Sorted    bool         `json:"sorted,omitempty"`
+	MultiSel  bool         `json:"multiSelect,omitempty"`
+	Editable  bool         `json:"editable,omitempty"`
+	Widgets   []widgetFile `json:"widgets"`
 }
 
 type optionFile struct {

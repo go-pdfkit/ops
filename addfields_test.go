@@ -434,4 +434,3 @@ func TestFieldsCanBeAddedToADocumentMergedFromTwoFiles(t *testing.T) {
 		t.Errorf("the widget came back as %v", got.Widgets)
 	}
 }
-
