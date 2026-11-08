@@ -193,12 +193,45 @@ var sanitisedPageKeys = map[reader.Name]bool{"AF": true}
 // buildBorrowedPage copies a page out of the file it came from.
 func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, where destinations, kept *keptAnnots) reader.Dict {
 	src, _ := p.src.Page(p.number)
+
+	// ⛔⛔ THE REWRITE IS WORKED OUT BEFORE THE COPY, AND THAT IS A SECURITY FIX
+	// RATHER THAN A TIDYING. This used to copy every key of the source page —
+	// `Contents` among them, which copies the stream OBJECT into the output —
+	// and then overwrite copied["Contents"] with the rewritten stream. The
+	// original object stayed in the file, referenced by nothing, holding every
+	// word the redaction had just promised to remove. `grep secret out.pdf`
+	// found it.
+	//
+	// ⛔ And no test could see it: the suite read the redacted text through
+	// contentsOf and extract.Text, which follow the page's /Contents and so see
+	// only the stream that replaced it. A promise about the BYTES of a file
+	// cannot be checked by reading the document those bytes describe — see
+	// TestNothingOfTheOldStreamSurvivesInTheFile.
+	out, rewritten, err := d.rewrittenContent(p)
+	if err != nil {
+		// ⛔ RECORDED, AND THE WHOLE WRITE FAILS ON IT. A page whose redaction
+		// could not be applied must not be written: the fill would be painted
+		// over text that is still there, and the caller would be holding a
+		// document that looks redacted. [Doc.Bytes] checks this before it
+		// returns anything.
+		if d.redactErr == nil {
+			d.redactErr = err
+		}
+		rewritten = false
+	}
+
 	copied := reader.Dict{}
 	for k, v := range src {
 		if rebuiltPageKeys[k] || (d.sanitize && sanitisedPageKeys[k]) {
 			continue
 		}
+		if k == "Contents" && rewritten {
+			continue // its replacement is added below; copying it would orphan it
+		}
 		copied[k] = w.Copy(p.src, v)
+	}
+	if rewritten {
+		copied["Contents"] = w.Add(contentStream(out, nil))
 	}
 	copied["Type"] = reader.Name("Page")
 	copied["Parent"] = parent
@@ -213,22 +246,11 @@ func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, whe
 	}
 	ensureGeometry(copied)
 
-	// ⛔ The recolouring happens BEFORE the decoration, and the order matters:
-	// a stamp's own colour is the stamp's business, so recolouring the page's
-	// text must not reach the marks this document put on top of it.
-	if out, rewritten, err := d.rewrittenContent(p); err != nil {
-		// ⛔ RECORDED, AND THE WHOLE WRITE FAILS ON IT. A page whose redaction
-		// could not be applied must not be written: the fill would be painted
-		// over text that is still there, and the caller would be holding a
-		// document that looks redacted. [Doc.Bytes] checks this before it
-		// returns anything.
-		if d.redactErr == nil {
-			d.redactErr = err
-		}
-	} else if rewritten {
-		copied["Contents"] = w.Add(contentStream(out, nil))
-	}
-
+	// The recolouring, the redaction and any text replacement have already been
+	// applied above, before the copy, so that the stream they replace never
+	// reaches the file. What follows is what this package draws ON TOP of the
+	// page — and it comes after, because a stamp's own colour is the stamp's
+	// business and recolouring the page's text must not reach it.
 	extra, resources := d.borrowedExtras(w, p, src)
 	if len(extra) > 0 {
 		d.decorate(w, p, src, copied, extra, resources)
@@ -298,8 +320,13 @@ func (d *Doc) decorate(w *reader.Writer, p Page, src, copied reader.Dict, extra 
 	// would come back with the redacted text still in it, and the fill drawn
 	// over it would make the document look redacted. A recolouring that is
 	// undone is a colour; a redaction that is undone is a leak.
+	// ⛔ AND A TEXT REPLACEMENT IS THE THIRD. The list of conditions here has to
+	// match the one rewrittenContent starts with, and the way this pair fails is
+	// silent: a page whose text was replaced AND stamped would come back saying
+	// what it said before. Three names in two places is two places to forget
+	// one, which is why rewroteContent answers for both.
 	var parts reader.Array
-	if rewritten, ok := copied["Contents"].(reader.Ref); ok && (p.recolour != nil || len(p.redactions) > 0) {
+	if rewritten, ok := copied["Contents"].(reader.Ref); ok && p.rewroteContent() {
 		parts = reader.Array{rewritten}
 	} else {
 		parts = contentParts(w, p.src, src)

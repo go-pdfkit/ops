@@ -74,6 +74,40 @@ func redacted(t *testing.T, body string, r Redaction) []byte {
 	return out
 }
 
+// ⛔⛔ THE TEST WHOSE ABSENCE LET A LEAK SHIP. Everything below reads the
+// redacted document the way a READER does — through the page's /Contents, or
+// through extract — and that is exactly what cannot see the defect this covers.
+//
+// buildBorrowedPage used to copy every key of the source page, `Contents` among
+// them, which copies the stream OBJECT into the output; only afterwards did it
+// point the page at the rewritten stream. The original stayed in the file,
+// referenced by nothing, holding every word the redaction had promised to
+// remove. `grep secret out.pdf` found it; `extract.Text` could not, because
+// extract follows the reference and the orphan has none.
+//
+// ISO 32000-1 §12.5.6.23 asks for "all traces of the specified content" to be
+// removed. A trace nothing references is still a trace: every recovery tool
+// walks the object table rather than the page tree, and so does grep.
+//
+// So this looks at the BYTES OF THE FILE, which is the only level at which the
+// promise is written. ⛔ It must stay the first test in this file, and it must
+// stay crude: a cleverer version that parsed the objects first would be the
+// test that was already here.
+func TestNothingOfTheOldStreamSurvivesInTheFile(t *testing.T) {
+	out := redacted(t, twoLines, overSecret())
+	if i := strings.Index(string(out), "secret"); i >= 0 {
+		from := max(i-60, 0)
+		to := min(i+60, len(out))
+		t.Errorf("the redacted word is still in the file at byte %d:\n%q",
+			i, out[from:to])
+	}
+	// The control: the word that was to be KEPT is still there, so this is
+	// measuring a redaction and not an empty file.
+	if !strings.Contains(string(out), "public") {
+		t.Error("the file no longer holds the text that was to be kept")
+	}
+}
+
 // ⛔⛔ THE ONLY TEST THAT DECIDES WHETHER THIS IS A REDACTION. ISO 32000-1
 // §12.5.6.23 requires a conforming reader to "remove all traces of the
 // specified content". A black rectangle drawn over a paragraph passes every

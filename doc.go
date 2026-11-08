@@ -131,6 +131,25 @@ type Page struct {
 	// are checked for what cannot be removed when Redact is called rather than
 	// when the document is written: see [Doc.Redact].
 	redactions []Redaction
+
+	// textEdits are replacements for the text this page already draws, checked
+	// when ReplaceText is called rather than when the document is written: see
+	// [Doc.ReplaceText].
+	textEdits []TextEdit
+}
+
+// rewroteContent says whether this page's own content stream is replaced rather
+// than carried over.
+//
+// ⛔ ONE ANSWER FOR EVERY PLACE THAT ASKS. Three things rewrite a page's stream
+// — a recolouring, a redaction and a text replacement — and three places need
+// to know: the rewrite itself, the copy that must NOT carry the old stream into
+// the file beside it, and the decoration that must build on the new one. Each
+// of those was written with its own list, and a list that forgets a case fails
+// in silence: a page both redacted and stamped came back with the redacted text
+// still in it, and the fill over it made the document look clean.
+func (p Page) rewroteContent() bool {
+	return p.recolour != nil || len(p.redactions) > 0 || len(p.textEdits) > 0
 }
 
 // Open reads a PDF file held in memory, with the empty password.
