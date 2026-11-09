@@ -39,6 +39,7 @@ var commands = []command{
 	{"delete", "-pages <range> <in.pdf> <out.pdf>", "drop the pages a range names", runDelete},
 	{"reverse", "<in.pdf> <out.pdf>", "put the pages in the opposite order", runReverse},
 	{"rotate", "-pages <range> -by <degrees> <in.pdf> <out.pdf>", "turn pages by a multiple of ninety", runRotate},
+	{"turn", "-pages <range> -by <degrees> <in.pdf> <out.pdf>", "turn pages by any angle, clockwise, growing the paper so no corner is cut off", runTurn},
 	{"crop", "-pages <range> -box <l,b,r,t> <in.pdf> <out.pdf>", "set the visible area, in points", runCrop},
 	{"resize", "[-pages <range>] (-box <l,b,r,t> | -to <name> [-landscape]) <in.pdf> <out.pdf>", "set how big the pages are", runResize},
 	{"move", "-from <page> -to <page> <in.pdf> <out.pdf>", "take a page out and put it back elsewhere", runMove},
@@ -279,6 +280,32 @@ func runRotate(c *context, args []string) error {
 		err = d.Rotate(*pages, *by)
 	}
 	if err != nil {
+		return err
+	}
+	return save(d, fs.Arg(1))
+}
+
+// runTurn is the arbitrary-angle sibling of runRotate. It is a verb of its own
+// rather than a flag on that one because the two do different things to the
+// document: a quarter turn is a number written on the page, and any other
+// angle rewrites the page onto a bigger sheet. A reader who typed -by 30 on
+// `rotate` and got a refusal would learn more from a verb that says what it
+// does than from a flag that quietly changed the kind of file they get.
+func runTurn(c *context, args []string) error {
+	fs := flags("turn")
+	pages := fs.String("pages", "all", "the pages to turn")
+	by := fs.Float64("by", 0, "degrees clockwise; any angle, not only a multiple of ninety")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.Turn(*pages, *by); err != nil {
 		return err
 	}
 	return save(d, fs.Arg(1))

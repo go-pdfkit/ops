@@ -200,6 +200,67 @@ func TestRotate(t *testing.T) {
 	}
 }
 
+// `turn` takes the angle `rotate` refuses, and the file it writes says so: a
+// page turned by thirty degrees sits on a bigger sheet than it started on,
+// which is the visible half of "no corner is cut off".
+func TestTurn(t *testing.T) {
+	in := fixture(t, 2)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	// The sizes come from the command's own `info`, so the measurement is one
+	// a person at a terminal could repeat.
+	sizes := func(path string) []string {
+		t.Helper()
+		code, printed, msg := exec("info", path)
+		if code != 0 {
+			t.Fatalf("info: code %d: %s", code, msg)
+		}
+		var out []string
+		for _, line := range strings.Split(printed, "\n") {
+			if strings.HasPrefix(line, "page ") {
+				out = append(out, line)
+			}
+		}
+		if len(out) != 2 {
+			t.Fatalf("info printed %d page line(s)", len(out))
+		}
+		return out
+	}
+	was := sizes(in)
+	if code, _, msg := exec("turn", "-pages", "1", "-by", "30", in, out); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	now := sizes(out)
+	if now[0] == was[0] {
+		t.Errorf("a page turned thirty degrees is still %q: the sheet did not grow, so its corners "+
+			"are off the paper", now[0])
+	}
+	// The page nobody named keeps the paper it had.
+	if now[1] != was[1] {
+		t.Errorf("page 2 went from %q to %q, and it was not named", was[1], now[1])
+	}
+	// A quarter turn is the cheap arm, and the command reaches it too.
+	if code, _, msg := exec("turn", "-pages", "all", "-by", "90", in, out); code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	b, _ := os.ReadFile(out)
+	d, _ := ops.Open(b)
+	if got, _ := d.Rotation(1); got != 90 {
+		t.Errorf("rotation = %d after a quarter turn", got)
+	}
+	for _, args := range [][]string{
+		{"turn", in},
+		{"turn", "-nosuchflag", in, out},
+		{"turn", "-by", "NaN", in, out},
+		{"turn", "-pages", "fourteen", "-by", "30", in, out},
+		{"turn", "-by", "30", "/no/such/file.pdf", out},
+		{"turn", "-by", "30", in, "/no/such/dir/x.pdf"},
+	} {
+		if code, _, _ := exec(args...); code != 1 {
+			t.Errorf("%v should fail", args)
+		}
+	}
+}
+
 func TestCrop(t *testing.T) {
 	in := fixture(t, 1)
 	out := filepath.Join(t.TempDir(), "out.pdf")

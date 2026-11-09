@@ -33,6 +33,7 @@ pdfops merge whole.pdf part1.pdf part2.pdf
 pdfops select -pages 3-7,last report.pdf extract.pdf
 pdfops delete -pages even scan.pdf fronts.pdf
 pdfops rotate -pages all -by 90 sideways.pdf upright.pdf
+pdfops turn -by 30 tilted.pdf turned.pdf
 pdfops crop -box 20,20,575,820 wide.pdf trimmed.pdf
 pdfops resize -to a4 odd-sizes.pdf a4.pdf
 pdfops resize -to a4 -landscape slides.pdf wide.pdf
@@ -216,6 +217,40 @@ the output: a higher value buys accuracy and costs time, and never quality. Too
 text lines, and below about two samples per line pitch it returns an angle that
 is simply wrong. See `SkewOptions.MaxPixels` in go-images for the measured
 table.
+
+`turn` turns pages by **any** angle, which is the half `rotate` refuses:
+`rotate` writes a number on the page — `/Rotate`, a multiple of ninety — and
+`turn` rewrites the page onto a sheet of its own.
+
+```sh
+pdfops turn -by 30 tilted.pdf straight.pdf
+pdfops turn -pages 2,5-7 -by -1.5 scan.pdf nudged.pdf
+```
+
+⛔ **The paper grows and nothing is cut off**, which is the whole difference
+from `deskew`. A deskew is a correction of a fraction of a degree on a page
+whose text sits well inside its margins, so it keeps the paper it was given; a
+turn by thirty degrees would lose two corners if the paper did not grow with
+it. The sheet is the turned page's bounding box —
+`w·|cos θ| + h·|sin θ|` across, `w·|sin θ| + h·|cos θ|` down — and the page is
+centred on it, which the tests check by mapping all four corners for angles
+from −350° to 350°: each must land **inside** the sheet, and each edge must be
+**touched**, or the box is bigger than it needs to be.
+
+An angle that is a multiple of ninety goes through `/Rotate` and nothing else
+happens: no transformation, no new content stream, and a page whose text was
+selectable stays selectable.
+
+⛔ **Positive is clockwise, and the reference this is ported from contradicts
+itself about that.** BentoPDF's `rotate-custom` documents *"Positive values
+rotate clockwise"*; its code writes a multiple of ninety as `/Rotate` — which
+ISO 32000-1 Table 30 defines as degrees **clockwise** — and sends every other
+angle through `pdf-lib`'s `drawPage`, which concatenates `[cos sin −sin cos]`,
+a **counter-clockwise** turn in a space whose *y* counts upwards. The two arms
+turn opposite ways and the seam is at exactly 90°. Here both are clockwise, and
+the gate is a render: a mark at the top of a square page must come back at the
+right-hand edge after +90°, the way a clock's hand goes from twelve to three —
+measured at 89°, 90° and 91° so that the seam itself is crossed.
 
 ⛔ `divide` makes the **same grid** as `poster` and is the opposite operation.
 `poster` keeps every piece the size of the page it came from, so it
