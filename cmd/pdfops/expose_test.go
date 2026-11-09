@@ -281,6 +281,108 @@ func TestOutlineFromAndDrop(t *testing.T) {
 	}
 }
 
+// contents: the printed table of contents, from the same file.
+func TestContentsVerb(t *testing.T) {
+	dir := t.TempDir()
+	in := fixture(t, 6)
+	toc := filepath.Join(dir, "toc.txt")
+	if err := os.WriteFile(toc, []byte("Introduction\t1\n  Why\t2\nChapter one\t4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out.pdf")
+
+	// ⛔ -size and -margin because this suite's fixture pages are 100 points
+	// across: the default two-centimetre margin leaves a hundred-point page no
+	// room for a title at all, and the library refuses that rather than drawing
+	// a column of page numbers with nothing to read beside them.
+	code, said, msg := exec("contents", "-from", toc, "-title", "What is in here",
+		"-size", "5", "-margin", "8", "-bookmarks", in, out)
+	if code != 0 {
+		t.Fatalf("contents: code %d: %s", code, msg)
+	}
+	if !strings.Contains(said, "wrote a table of contents on 1 page(s)") {
+		t.Errorf("it said %q", said)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ⛔ THE DRAWN PAGE IS READ THROUGH THE READER, not grepped: `save` packs
+	// the objects, so the strings the contents page shows are inside a
+	// FlateDecode stream and a search of the raw bytes finds nothing. The
+	// bookmark titles below ARE in the raw bytes, which is what made the first
+	// version of this test pass for two of its three strings.
+	drawn, err := reader.Open(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := drawn.PageContent(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"(What is in here)", "(Introduction)", "(Chapter one)", "(....."} {
+		if !strings.Contains(string(page), want) {
+			t.Errorf("the contents page does not draw %s; it draws:\n%s", want, page)
+		}
+	}
+	// ⛔ AND THE BOOKMARKS AGREE WITH THE PRINTED NUMBERS. -bookmarks writes the
+	// tree from the same entries, moved by the page the contents added; without
+	// the shift every bookmark would land one page short of its heading.
+	back, err := reader.Open(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := back.PageCount(); got != 7 {
+		t.Fatalf("the written document has %d pages", got)
+	}
+	cat, _ := back.Catalog()
+	root, ok := back.GetDict(cat, "Outlines")
+	if !ok {
+		t.Fatal("the written document carries no outline")
+	}
+	first, ok := back.GetDict(root, "First")
+	if !ok {
+		t.Fatal("the outline carries no entries")
+	}
+	dest, _ := back.Resolve(first.Get("Dest"))
+	arr, _ := dest.(reader.Array)
+	want, _ := back.PageRef(2)
+	if len(arr) == 0 || arr[0] != reader.Object(want) {
+		t.Errorf("the first bookmark points at %v and page 2 is %v", arr, want)
+	}
+
+	// asked for wrongly
+	if code, _, _ := exec("contents", in, out); code != 1 {
+		t.Error("no -from should fail")
+	}
+	if code, _, _ := exec("contents", "-from", "/no/such/toc.txt", in, out); code != 1 {
+		t.Error("a missing file should fail")
+	}
+	if code, _, _ := exec("contents", "-from", toc, in); code != 1 {
+		t.Error("a missing output argument should fail")
+	}
+	bad := filepath.Join(dir, "bad.txt")
+	if err := os.WriteFile(bad, []byte("Introduction\t1\nChapter one 4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, msg := exec("contents", "-from", bad, in, out); code != 1 ||
+		!strings.Contains(msg, "line 2") {
+		t.Errorf("a bad line exited %d saying %q", code, msg)
+	}
+	// An entry past the last page is the library's refusal, passed on.
+	past := filepath.Join(dir, "past.txt")
+	if err := os.WriteFile(past, []byte("Nowhere\t99\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, msg := exec("contents", "-from", past, in, out); code != 1 ||
+		!strings.Contains(msg, "the document has 6") {
+		t.Errorf("an entry past the end exited %d saying %q", code, msg)
+	}
+	if code, _, _ := exec("contents", "-from", toc, filepath.Join(dir, "nope.pdf"), out); code != 1 {
+		t.Error("a missing input should fail")
+	}
+}
+
 // The bookmark file's grammar now lives in the library, beside SetOutline, so
 // that the browser workbench reads the same file as `outline -from`: its tests
 // are ops' own (outlinetext_test.go). What stays the command's business is that
@@ -335,6 +437,7 @@ func TestTheNewVerbsRefuseABadFlagAndAMissingInput(t *testing.T) {
 		{"attach", []string{"attach", "-nosuchflag", "-file", in, in, out}},
 		{"detach", []string{"detach", "-nosuchflag", "-name", "x", in, out}},
 		{"outline", []string{"outline", "-nosuchflag", "-drop", in, out}},
+		{"contents", []string{"contents", "-nosuchflag", "-from", in, in, out}},
 	} {
 		if code, _, _ := exec(c.args...); code != 1 {
 			t.Errorf("%s: a bad flag should fail", c.name)
