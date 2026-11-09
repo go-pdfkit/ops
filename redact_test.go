@@ -255,7 +255,12 @@ func TestRedactingRefusesWhatItCannotRemove(t *testing.T) {
 		assertRefused(t, pdf, overSecret(), "form XObject")
 	})
 
-	// An image: the spec says the pixels must be destroyed, not covered.
+	// An image whose pixels cannot be destroyed. ⛔ A PLAIN ONE IS NO LONGER A
+	// REFUSAL: its samples are blanked and written back, which is what
+	// 12.5.6.23 asks for — see redactimage_test.go. What stays refused is a
+	// picture this release cannot rewrite, and a JPEG is the common one: its
+	// samples are still DCTDecode, and re-encoding them is a separate piece of
+	// work with a size and a quality question in it.
 	t.Run("an image across the region", func(t *testing.T) {
 		const body = "BT /F1 10 Tf 20 150 Td (public) Tj ET q 70 0 0 20 15 95 cm /Im1 Do Q"
 		pdf := secretPage(t, body, func(w *reader.Writer, res reader.Dict) {
@@ -263,6 +268,7 @@ func TestRedactingRefusesWhatItCannotRemove(t *testing.T) {
 				"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
 				"Width": reader.Integer(2), "Height": reader.Integer(2),
 				"ColorSpace": reader.Name("DeviceGray"), "BitsPerComponent": reader.Integer(8),
+				"Filter": reader.Name("DCTDecode"),
 			}, Raw: []byte{0, 64, 128, 255}})}
 		})
 		assertRefused(t, pdf, overSecret(), "image")

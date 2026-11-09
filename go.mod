@@ -8,8 +8,9 @@ require (
 	github.com/go-ooxml/ooxml v0.7.0
 	github.com/go-ooxml/opc v0.2.1
 	github.com/go-pdfkit/document v0.2.0
-	github.com/go-pdfkit/extract v0.10.0
+	github.com/go-pdfkit/extract v0.11.0
 	github.com/go-pdfkit/forms v0.6.0
+	github.com/go-pdfkit/pdffont v0.4.0
 	github.com/go-pdfkit/reader v0.10.0
 	github.com/go-pdfkit/render v0.69.1
 	github.com/go-pdfkit/xfa v0.22.0
@@ -33,7 +34,6 @@ require (
 	github.com/go-opentype/fonts v0.14.0 // indirect
 	github.com/go-opentype/opentype v0.17.0 // indirect
 	github.com/go-pdfkit/html2pdf v0.4.1 // indirect
-	github.com/go-pdfkit/pdffont v0.4.0 // indirect
 	github.com/go-pdfkit/pdfkit v0.20.0 // indirect
 	github.com/go-richdoc/html v0.3.0 // indirect
 	github.com/go-simd/highway v0.0.14 // indirect
