@@ -40,6 +40,7 @@ var commands = []command{
 	{"reverse", "<in.pdf> <out.pdf>", "put the pages in the opposite order", runReverse},
 	{"rotate", "-pages <range> -by <degrees> <in.pdf> <out.pdf>", "turn pages by a multiple of ninety", runRotate},
 	{"turn", "-pages <range> -by <degrees> <in.pdf> <out.pdf>", "turn pages by any angle, clockwise, growing the paper so no corner is cut off", runTurn},
+	{"compare", "<earlier.pdf> <later.pdf>", "say what changed between two versions of a document", runCompare},
 	{"crop", "-pages <range> -box <l,b,r,t> <in.pdf> <out.pdf>", "set the visible area, in points", runCrop},
 	{"resize", "[-pages <range>] (-box <l,b,r,t> | -to <name> [-landscape]) <in.pdf> <out.pdf>", "set how big the pages are", runResize},
 	{"move", "-from <page> -to <page> <in.pdf> <out.pdf>", "take a page out and put it back elsewhere", runMove},
@@ -388,6 +389,65 @@ func runSplit(c *context, args []string) error {
 		fmt.Fprintln(c.out, name)
 	}
 	return nil
+}
+
+// runCompare prints what changed between two documents.
+//
+// ⛔ IT EXITS 0 WHETHER OR NOT THEY DIFFER. `diff` exits 1 on a difference and
+// this verb deliberately does not: in this command an exit of 1 means the work
+// could not be done, and a document that changed is the work being done. A
+// caller who wants a yes-or-no reads the last line, which says it in words.
+func runCompare(c *context, args []string) error {
+	fs := flags("compare")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<earlier.pdf> <later.pdf>"); err != nil {
+		return err
+	}
+	before, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	after, err := os.ReadFile(fs.Arg(1))
+	if err != nil {
+		return err
+	}
+	pairs, err := ops.Compare(before, after)
+	if err != nil {
+		return err
+	}
+	changed := 0
+	for _, p := range pairs {
+		if !p.Changed() {
+			continue
+		}
+		changed++
+		for _, ch := range p.Changes {
+			fmt.Fprintf(c.out, "%-9s %-18s %s\n", pageName(p), ch.Kind, ch.What)
+		}
+	}
+	switch changed {
+	case 0:
+		fmt.Fprintf(c.out, "the two documents say the same thing on all %d page(s)\n", len(pairs))
+	case 1:
+		fmt.Fprintf(c.out, "1 of %d page(s) changed\n", len(pairs))
+	default:
+		fmt.Fprintf(c.out, "%d of %d page(s) changed\n", changed, len(pairs))
+	}
+	return nil
+}
+
+// pageName is how a pair of pages is written in the report: "3 -> 4", with a
+// dash for the side that has no page.
+func pageName(p ops.PagePair) string {
+	side := func(n int) string {
+		if n == 0 {
+			return "-"
+		}
+		return strconv.Itoa(n)
+	}
+	return side(p.Before) + " -> " + side(p.After)
 }
 
 func runInfo(c *context, args []string) error {

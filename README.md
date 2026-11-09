@@ -34,6 +34,7 @@ pdfops select -pages 3-7,last report.pdf extract.pdf
 pdfops delete -pages even scan.pdf fronts.pdf
 pdfops rotate -pages all -by 90 sideways.pdf upright.pdf
 pdfops turn -by 30 tilted.pdf turned.pdf
+pdfops compare draft1.pdf draft2.pdf
 pdfops crop -box 20,20,575,820 wide.pdf trimmed.pdf
 pdfops resize -to a4 odd-sizes.pdf a4.pdf
 pdfops resize -to a4 -landscape slides.pdf wide.pdf
@@ -251,6 +252,41 @@ turn opposite ways and the seam is at exactly 90°. Here both are clockwise, and
 the gate is a render: a mark at the top of a square page must come back at the
 right-hand edge after +90°, the way a clock's hand goes from twelve to three —
 measured at 89°, 90° and 91° so that the seam itself is crossed.
+
+`compare` says what changed between two versions of a document.
+
+```sh
+pdfops compare draft1.pdf draft2.pdf
+```
+
+```text
+- -> 2    page added
+2 -> 3    text removed       zeta
+2 -> 3    text added         theta
+2 of 3 page(s) changed
+```
+
+⛔ **The pages are paired by what they say, not by their numbers.** A page
+inserted in the middle moves nothing after it: the pages that follow are still
+paired with the pages they came from, and the insertion is one *page added*.
+Pairing by number would report that page as an edit of the next, that one as an
+edit of the one after, and so on to the end — every page of the document
+changed, which is both useless and false.
+
+A pair has to share **half its words**, or it is one page removed and another
+added. Without that floor the alignment pairs the least unalike pages it can
+find, so a replaced chapter reads as a rewrite of the one before it.
+
+Inside a pair the diff is **Myers** (*An O(ND) Difference Algorithm and Its
+Variations*, Algorithmica **1** (1986) 251–266), over words, and the words that
+changed together are reported together: *"quick brown fox"* → *"slow grey
+mole"* is two changes and not six. Pictures are told apart by a **hash of their
+samples**, so a swapped logo of the same size is a change; annotations by their
+subtype and their text.
+
+⛔ `compare` **exits 0 whether or not the documents differ**, unlike `diff`: in
+this command an exit of 1 means the work could not be done, and a document that
+changed is the work being done. The answer is in the last line, in words.
 
 ⛔ `divide` makes the **same grid** as `poster` and is the opposite operation.
 `poster` keeps every piece the size of the page it came from, so it
