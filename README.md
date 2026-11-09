@@ -968,7 +968,7 @@ not told believes the document safe to send. It refuses a region holding:
 | what | why |
 | --- | --- |
 | text inside a Form XObject | the bytes are not the page's, and an XObject is **shared** — cleaning one page would change every page that draws it. `RecolourText` stops at the same wall |
-| an image | the spec is explicit that a mask or a clip will not do and the pixels must be destroyed; re-encoding an image with them overwritten is not in this release |
+| an image this release cannot **rewrite** | a plain one is no longer refused: its samples are destroyed and it is written back, which is what §12.5.6.23 asks for. What is refused is a picture whose samples cannot be put back truthfully — see *destroying the pixels* below |
 | an annotation | its own `/Contents` can hold the very words being redacted |
 | an annotation **this document has added** and not yet written | a mark or a widget is held until the write, because each names the page *object* it sits on, so neither is in the source file — and reading only the source missed them. The workbench walked into it: highlight a line, then decide to redact it, and the text went while the note quoting it stayed. Drop the mark or the field first |
 | an operator only **part** of whose text is inside the region | blanking it would remove text nobody asked about, and the surviving words cannot simply be re-emitted: the bytes in the stream are font codes, and Unicode does not round-trip back to them through a CID font's map. Keeping the survivors' original bytes and replacing the removed ones with an equivalent kern is the way, and it is next |
@@ -977,6 +977,43 @@ not told believes the document safe to send. It refuses a region holding:
 The refusal happens when `Redact` is **called**, not when the document is
 written — by the time of `Bytes` the caller has already been promised a
 redacted document by everything in between.
+
+### Destroying the pixels
+
+§12.5.6.23 is explicit that a clip or a mask will not do, so the samples under
+the region are **overwritten and the picture is written back**. A scanned page
+is one picture, so without this the verb refused everything a scanner produces.
+
+What this does it to is a picture whose samples are **plain** — one the reader
+has already unfiltered — eight bits a component, `DeviceGray` or `DeviceRGB`,
+drawn **upright** and drawn **once** on the page. Each of the others is refused
+by its own name, with the reason:
+
+| refused | why |
+| --- | --- |
+| still `DCTDecode` or `JPXDecode` | its samples would have to be decoded and re-encoded, which is a size and a quality question of its own: re-encoding as Flate makes a scan five to twenty times larger, and re-encoding as JPEG re-compresses every pixel of the page, including the ones nobody asked about |
+| drawn **turned or skewed** | the box a turned picture covers looks exactly like the box an upright one covers, so mapping the region into its samples by that box would destroy more than was asked for — which is the other way a redaction betrays its caller. `extract.Image.Matrix` exists for this: `b` and `c` are zero for an upright picture, and stay zero for a flipped one |
+| drawn **more than once** on the page | replacing the picture replaces it for every `Do` that names it, so blanking it for one placement blanks it for the others, in a different place each time |
+| an **inline** image | it is written into the content stream rather than held as a resource, so there is nothing to write back in its place |
+| `/ImageMask`, `/SMask`, `/Mask`, `/Decode` | each changes what a sample means, and a sample set to zero under one of them is not necessarily a destroyed one |
+| `/Indexed`, `/ICCBased`, `/DeviceCMYK`, anything else | in an indexed space a zero is the palette's **first** colour, which may be white; in the others the component count has to be read out of a stream. What a destroyed sample holds there is not something to guess at |
+| samples that are not all there | the stream is shorter or longer than `Width × Height × components`, so what is in it is not what it says |
+
+⛔ **The original picture is not left in the file.** The page's `/Resources` are
+**rebuilt** with the blanked picture in place of the original rather than copied
+— copying them would have written the original into the output beside the
+blanked one, referenced by nothing and holding every pixel the redaction
+promised to remove. That is exactly the shape of the leak fixed in #74, one
+object along, and the test for it walks **every object** of the written file and
+decodes it, because a picture's samples are compressed and a raw `grep` cannot
+see them.
+
+⛔ **And the sample grid counts down while the page counts up.** A picture
+occupies the unit square of the transform in force, where *v* runs from its
+bottom edge to its top, while sample row zero is its **top** row. Reading one
+for the other blanks the mirror image of what was asked for, which looks like a
+redaction until somebody compares it with the page. A region ending part way
+into a sample destroys **all** of that sample: a third of a secret is a secret.
 
 A redaction also survives the rest of the verbs. That is worth saying because
 the write path once dropped a rewritten content stream whenever it stamped a

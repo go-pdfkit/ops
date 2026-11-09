@@ -124,20 +124,15 @@ func (d *Doc) checkRedactable(p *Page, r Redaction) error {
 	if err := unremovableText(r.Page, runs, r.Quads); err != nil {
 		return err
 	}
-	images, err := extractImages(p.src, p.number)
-	if err != nil {
-		return fmt.Errorf("ops: the images of page %d could not be read: %w", r.Page, err)
-	}
-	for _, im := range images {
-		// ⛔ DrawnWidth and DrawnHeight, not Width and Height: those two are the
-		// picture's own SAMPLES. Comparing a sample count with a region in
-		// points would weigh a 2048-pixel thumbnail against a 72-point box and
-		// refuse every page that carried a picture at all.
-		if overlaps(im.X, im.Y, im.X+im.DrawnWidth, im.Y+im.DrawnHeight, r.Quads) {
-			return fmt.Errorf("ops: page %d places an image across the region, and a redaction "+
-				"must destroy the pixels rather than cover them, which this cannot yet do",
-				r.Page)
-		}
+	// ⛔ THE PICTURES ARE PLANNED HERE AND THE PLAN IS THROWN AWAY, which is
+	// deliberate: what this call is for is the REFUSAL. A picture whose samples
+	// this release cannot destroy must be named at [Doc.Redact], where a caller
+	// can still choose another region or another tool, rather than at the write
+	// — by which point everything in between has promised them a redacted
+	// document. The writer calls the same function for the bytes, so the check
+	// and the work cannot drift apart.
+	if _, err := d.plannedImages(p, []Redaction{r}); err != nil {
+		return err
 	}
 	// ⛔⛔ THE ANNOTATIONS THIS DOCUMENT HAS ADDED COUNT TOO, and reading only
 	// the source page missed them. Held until the write, because a widget and a

@@ -221,6 +221,21 @@ func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, whe
 		rewritten = false
 	}
 
+	// ⛔⛔ THE SAME RULE AS THE CONTENT, FOR THE PICTURES. A redaction over an
+	// image destroys the samples under it, which means writing the picture back
+	// changed — and copying the page's /Resources wholesale would copy the
+	// ORIGINAL picture into the file beside the blanked one, referenced by
+	// nothing and holding exactly what the redaction promised to remove. That is
+	// defect #74 one object along, so the replacement is worked out here, before
+	// the copy, and /Resources is rebuilt rather than copied.
+	//
+	// ⛔ The refusal is not branched on HERE, and that is the whole of what this
+	// has to say about it: checkRedactable ran this same function for every
+	// redaction when [Doc.Redact] was called, on the same pictures of the same
+	// page, so a plan that is refused now was refused then and the caller was
+	// told. A branch would be an arm no test could reach.
+	imgs, _ := d.plannedImages(&p, p.redactions)
+
 	copied := reader.Dict{}
 	for k, v := range src {
 		if rebuiltPageKeys[k] || (d.sanitize && sanitisedPageKeys[k]) {
@@ -229,7 +244,13 @@ func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, whe
 		if k == "Contents" && rewritten {
 			continue // its replacement is added below; copying it would orphan it
 		}
+		if k == "Resources" && len(imgs) > 0 {
+			continue // rebuilt below, with the blanked pictures in place
+		}
 		copied[k] = w.Copy(p.src, v)
+	}
+	if len(imgs) > 0 {
+		copied["Resources"] = d.borrowedResources(w, p, src, imgs)
 	}
 	if rewritten {
 		copied["Contents"] = w.Add(contentStream(out, nil))
@@ -254,7 +275,7 @@ func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, whe
 	// business and recolouring the page's text must not reach it.
 	extra, resources := d.borrowedExtras(w, p, src)
 	if len(extra) > 0 {
-		d.decorate(w, p, src, copied, extra, resources)
+		d.decorate(w, p, src, copied, extra, resources, imgs)
 	}
 	if annots := d.copyAnnots(w, p, src, where, kept); len(annots) > 0 {
 		copied["Annots"] = annots
@@ -306,7 +327,7 @@ func (d *Doc) borrowedExtras(w *reader.Writer, p Page, src reader.Dict) ([]byte,
 // decorate adds generated content to a copy of a borrowed page. The page's own
 // content is left exactly as it was, wrapped in a save and a restore so that
 // whatever state it leaves behind cannot reach what comes after it.
-func (d *Doc) decorate(w *reader.Writer, p Page, src, copied reader.Dict, extra []byte, resources reader.Dict) {
+func (d *Doc) decorate(w *reader.Writer, p Page, src, copied reader.Dict, extra []byte, resources reader.Dict, imgs []plannedImage) {
 	before := w.Add(contentStream([]byte("q\n"), nil))
 	after := w.Add(contentStream(append([]byte("Q\n"), extra...), nil))
 	// ⛔ The page's content may ALREADY have been rewritten — by a
@@ -337,13 +358,75 @@ func (d *Doc) decorate(w *reader.Writer, p Page, src, copied reader.Dict, extra 
 
 	// The resources are rebuilt as a dictionary of this file's own, because
 	// the page may be sharing them with pages that are not being decorated.
-	direct := reader.Dict{}
-	if res, ok := p.src.GetDict(src, "Resources"); ok {
-		for k, v := range res {
-			direct[k] = w.Copy(p.src, v)
-		}
+	//
+	// ⛔ THROUGH THE SAME FUNCTION THE PAGE ITSELF USES, so that a page both
+	// redacted and stamped keeps its blanked pictures. Copying the source's
+	// resources again here would have put the original picture back — the same
+	// shape of defect as the content stream this function already guards, and
+	// the undoing would have been silent.
+	copied["Resources"] = mergeResources(d.borrowedResources(w, p, src, imgs), resources)
+}
+
+// borrowedResources is a page's resources as a dictionary of this file's own,
+// with any picture whose samples a redaction destroyed written in place of the
+// original.
+//
+// ⛔ The originals are NOT copied: a blanked picture beside the picture it
+// replaced, with nothing pointing at the original, is a file that still holds
+// what the redaction removed. That is how defect #74 read, one object along.
+func (d *Doc) borrowedResources(w *reader.Writer, p Page, src reader.Dict, imgs []plannedImage) reader.Dict {
+	out := reader.Dict{}
+	res, ok := p.src.GetDict(src, "Resources")
+	if !ok {
+		return out
 	}
-	copied["Resources"] = mergeResources(direct, resources)
+	blanked := map[reader.Name]plannedImage{}
+	for _, im := range imgs {
+		blanked[im.name] = im
+	}
+	// ⛔ Read once, and tested in the SAME condition as the rest: an /XObject
+	// entry that is not a dictionary is one extract found no pictures in, so
+	// `blanked` would be empty and the entry copied — a branch of its own for it
+	// would be an arm no test could reach.
+	xo, hasXObjects := p.src.GetDict(res, "XObject")
+	for k, v := range res {
+		if k != "XObject" || len(blanked) == 0 || !hasXObjects {
+			out[k] = w.Copy(p.src, v)
+			continue
+		}
+		rebuilt := reader.Dict{}
+		for name, entry := range xo {
+			im, found := blanked[name]
+			if !found {
+				rebuilt[name] = w.Copy(p.src, entry)
+				continue
+			}
+			rebuilt[name] = w.Add(blankedStream(im))
+		}
+		out[k] = rebuilt
+	}
+	return out
+}
+
+// blankedStream is a picture's dictionary with its destroyed samples, written
+// as this file's own object.
+//
+// ⛔ Its own dictionary, with the filters DROPPED. The samples here are the
+// ones the reader unfiltered, so a /Filter or a /DecodeParms carried over from
+// the original would tell the next reader to undo a compression that is no
+// longer there. contentStream deflates what it is given and says so.
+func blankedStream(im plannedImage) *reader.Stream {
+	dict := reader.Dict{}
+	for k, v := range im.dict {
+		switch k {
+		case "Filter", "DecodeParms", "DP", "F", "Length":
+			continue
+		}
+		dict[k] = v
+	}
+	dict["Type"] = reader.Name("XObject")
+	dict["Subtype"] = reader.Name("Image")
+	return contentStream(im.data, dict)
 }
 
 // contentParts returns a page's content streams as references in the file
