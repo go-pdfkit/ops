@@ -262,67 +262,30 @@ func TestOutlineFromAndDrop(t *testing.T) {
 	if code, _, _ := exec("outline", "-from", "/no/such/toc.txt", in, out); code != 1 {
 		t.Error("a missing bookmark file should fail")
 	}
+	// A file that exists and cannot be read: the library names the line, and
+	// the command's job is to hand that sentence to the person, not to write
+	// a document missing an entry.
+	bad := filepath.Join(dir, "bad.txt")
+	if err := os.WriteFile(bad, []byte("Introduction\t1\nChapter one 3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, msg := exec("outline", "-from", bad, in, out)
+	if code != 1 {
+		t.Errorf("a bookmark file with a line missing its tab exited %d, want 1", code)
+	}
+	if !strings.Contains(msg, "line 2") {
+		t.Errorf("the refusal says %q, which does not name the line", msg)
+	}
 	if code, _, _ := exec("outline", "-drop", in); code != 1 {
 		t.Error("a missing output argument should fail")
 	}
 }
 
-// The bookmark file's grammar, and every way it can be wrong. A table of
-// contents quietly missing an entry is worse than one that refuses to be
-// written, so each of these is an error naming the line rather than a skip.
-func TestParseOutline(t *testing.T) {
-	marks, err := parseOutline("Introduction\t1\n  Why\t2\n  How\t3\n    Deeper\t4\nChapter one\t7\n\n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(marks) != 2 {
-		t.Fatalf("top level = %d, want two", len(marks))
-	}
-	if marks[0].Title != "Introduction" || marks[0].Page != 1 {
-		t.Errorf("first = %+v", marks[0])
-	}
-	if len(marks[0].Children) != 2 {
-		t.Fatalf("children of the first = %d, want two", len(marks[0].Children))
-	}
-	if marks[0].Children[1].Title != "How" {
-		t.Errorf("second child = %+v", marks[0].Children[1])
-	}
-	if len(marks[0].Children[1].Children) != 1 || marks[0].Children[1].Children[0].Title != "Deeper" {
-		t.Errorf("third level = %+v", marks[0].Children[1].Children)
-	}
-	if marks[1].Title != "Chapter one" || marks[1].Page != 7 {
-		t.Errorf("second top-level = %+v", marks[1])
-	}
-
-	for _, bad := range []struct{ name, text, says string }{
-		{"no tab", "Introduction 1\n", "a tab"},
-		{"odd indent", "A\t1\n   B\t2\n", "levels of two"},
-		{"a level skipped", "A\t1\n    B\t2\n", "missing"},
-		{"empty title", "\t3\n", "empty"},
-		{"page is not a number", "A\tlater\n", "not a page number"},
-		{"page zero", "A\t0\n", "pages start at 1"},
-	} {
-		t.Run(bad.name, func(t *testing.T) {
-			_, err := parseOutline(bad.text)
-			if err == nil {
-				t.Fatalf("%q was accepted", bad.text)
-			}
-			if !strings.Contains(err.Error(), bad.says) {
-				t.Errorf("error %q does not say %q", err, bad.says)
-			}
-			if !strings.Contains(err.Error(), "line ") {
-				t.Errorf("error %q does not name the line", err)
-			}
-		})
-	}
-
-	// An empty file is an empty outline, not an error: SetOutline with nothing
-	// puts the sources' own bookmarks back, which is a thing to be able to ask
-	// for.
-	if got, err := parseOutline("\n\n  \n"); err != nil || len(got) != 0 {
-		t.Errorf("blank file = %v, %v", got, err)
-	}
-}
+// The bookmark file's grammar now lives in the library, beside SetOutline, so
+// that the browser workbench reads the same file as `outline -from`: its tests
+// are ops' own (outlinetext_test.go). What stays the command's business is that
+// a refusal reaches the person running it, which TestOutlineFromAndDrop covers
+// above through a bookmark file whose second line has no tab.
 
 // The refusals the library itself makes, reached through the verbs: the gate
 // here is exact 100 % statement coverage, and an error path nothing reaches is
