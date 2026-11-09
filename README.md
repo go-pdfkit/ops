@@ -621,6 +621,14 @@ library rather than in the command, so that anything else asked to write a
 table of contents — the browser workbench among them — accepts exactly the same
 file instead of carrying a second parser for it.
 
+A caller that already has the entries, rather than a file of them, goes through
+`ops.Nest([]Level) ([]Bookmark, error)`: a title, a page and a depth in reading
+order, which is what an `/Outlines` tree looks like once it has been walked.
+`ParseOutline` is that function with a parser in front of it. A row more than
+one level under the row before it is a `*ops.DepthError` naming the row — a
+tree with a rung missing is one nobody meant to ask for, and every way of
+guessing the missing level is a different document.
+
 `resize` sets how big a page **is**; `crop` sets what of it **shows**. Two
 verbs, because they are two questions. A size is a box in points, or one of
 `a3`, `a4`, `a5`, `letter`, `legal`, `tabloid` — derived from their definitions
