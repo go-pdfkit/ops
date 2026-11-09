@@ -42,6 +42,48 @@ func fixture(t *testing.T, n int) string {
 	return path
 }
 
+// wordedFixture writes a document whose pages say what they are given to say,
+// as real drawn text, and returns its path. `fixture` above writes content
+// streams that draw nothing, which is all most verbs need and is no use at all
+// to a verb that compares what two documents SAY.
+func wordedFixture(t *testing.T, name string, pages ...string) string {
+	t.Helper()
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	widths := make(reader.Array, 0, 224)
+	for i := 32; i < 256; i++ {
+		widths = append(widths, reader.Integer(500))
+	}
+	font := w.Add(reader.Dict{
+		"Type": reader.Name("Font"), "Subtype": reader.Name("Type1"),
+		"BaseFont": reader.Name("Helvetica"), "FirstChar": reader.Integer(32),
+		"LastChar": reader.Integer(255), "Widths": widths,
+		"Encoding": reader.Name("WinAnsiEncoding"),
+	})
+	kids := make(reader.Array, 0, len(pages))
+	for _, says := range pages {
+		content := w.Add(&reader.Stream{Dict: reader.Dict{},
+			Raw: fmt.Appendf(nil, "BT /F1 10 Tf 20 300 Td (%s) Tj ET\n", says)})
+		kids = append(kids, w.Add(reader.Dict{
+			"Type": reader.Name("Page"), "Parent": pagesRef, "Contents": content,
+			"Resources": reader.Dict{"Font": reader.Dict{"F1": font}},
+		}))
+	}
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"), "Kids": kids,
+		"Count":    reader.Integer(len(pages)),
+		"MediaBox": reader.Array{reader.Integer(0), reader.Integer(0), reader.Integer(300), reader.Integer(400)}})
+	root := w.Add(reader.Dict{"Type": reader.Name("Catalog"), "Pages": pagesRef})
+	out, err := w.Finish(reader.Dict{"Root": root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // exec runs the tool and returns its exit code and what it printed.
 func exec(args ...string) (int, string, string) {
 	var out, errOut bytes.Buffer
@@ -254,6 +296,58 @@ func TestTurn(t *testing.T) {
 		{"turn", "-pages", "fourteen", "-by", "30", in, out},
 		{"turn", "-by", "30", "/no/such/file.pdf", out},
 		{"turn", "-by", "30", in, "/no/such/dir/x.pdf"},
+	} {
+		if code, _, _ := exec(args...); code != 1 {
+			t.Errorf("%v should fail", args)
+		}
+	}
+}
+
+// ⛔ `compare` EXITS 0 WHETHER OR NOT THE DOCUMENTS DIFFER, unlike `diff`. In
+// this command an exit of 1 means the work could not be done, and a document
+// that changed is the work being done — so the answer is in the words, and
+// this test reads the words.
+func TestCompare(t *testing.T) {
+	before := wordedFixture(t, "before.pdf", "alpha beta gamma", "delta epsilon zeta")
+	after := wordedFixture(t, "after.pdf", "alpha beta gamma", "a wholly new page", "delta epsilon theta")
+
+	code, printed, msg := exec("compare", before, after)
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	for _, want := range []string{
+		"- -> 2    page added",
+		"2 -> 3    text removed       zeta",
+		"2 -> 3    text added         theta",
+		"2 of 3 page(s) changed",
+	} {
+		if !strings.Contains(printed, want) {
+			t.Errorf("the report does not hold %q:\n%s", want, printed)
+		}
+	}
+	// A document compared with itself says so in words, and still exits 0.
+	code, printed, msg = exec("compare", before, before)
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, msg)
+	}
+	if !strings.Contains(printed, "the two documents say the same thing on all 2 page(s)") {
+		t.Errorf("comparing a document with itself prints %q", printed)
+	}
+	// One page changed is said in the singular.
+	one := wordedFixture(t, "one.pdf", "alpha beta gamma", "delta epsilon theta")
+	if _, printed, _ = exec("compare", before, one); !strings.Contains(printed, "1 of 2 page(s) changed") {
+		t.Errorf("one page changed prints %q", printed)
+	}
+	notAPDF := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(notAPDF, []byte("this is not a PDF at all"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"compare", before},
+		{"compare", "-nosuchflag", before, after},
+		{"compare", "/no/such/file.pdf", after},
+		{"compare", before, "/no/such/file.pdf"},
+		{"compare", notAPDF, after},
 	} {
 		if code, _, _ := exec(args...); code != 1 {
 			t.Errorf("%v should fail", args)

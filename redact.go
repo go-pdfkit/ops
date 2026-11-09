@@ -196,6 +196,11 @@ func (d *Doc) checkRedactable(p *Page, r Redaction) error {
 var (
 	extractRuns   = extract.Runs
 	extractImages = extract.Images
+	// extractText is here with them, and replaceable for the same reason:
+	// Compare reads every page of two documents, and a page that cannot be
+	// read must make the comparison say so rather than quietly compare the
+	// pages it managed.
+	extractText = extract.Text
 	// pageContent is wrapped rather than used directly for the same reason:
 	// the difference between a recolouring and a redaction of a page that
 	// cannot be read is the difference between a lost colour and a document
