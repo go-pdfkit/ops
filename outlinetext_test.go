@@ -1,6 +1,7 @@
 package ops_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -72,6 +73,72 @@ func TestALineItCannotReadNamesTheLine(t *testing.T) {
 		if marks != nil {
 			t.Errorf("%s: returned %+v beside the error; a half-read outline is worse than none", c.why, marks)
 		}
+	}
+}
+
+// TestBookmarksInReadingOrderBecomeATree is Nest on its own: the entry point
+// for a caller that has an /Outlines tree already walked rather than a file to
+// read, which is what the browser workbench has.
+func TestBookmarksInReadingOrderBecomeATree(t *testing.T) {
+	marks, err := ops.Nest([]ops.Level{
+		{Title: "One", Page: 1},
+		{Title: "Under it", Page: 2, Depth: 1},
+		{Title: "Deeper still", Page: 3, Depth: 2},
+		{Title: "Two", Page: 7},
+	})
+	if err != nil {
+		t.Fatalf("Nest: %v", err)
+	}
+	if len(marks) != 2 {
+		t.Fatalf("got %d top-level bookmarks, want 2: %+v", len(marks), marks)
+	}
+	if len(marks[0].Children) != 1 || marks[0].Children[0].Title != "Under it" {
+		t.Fatalf("One's children are %+v", marks[0].Children)
+	}
+	deep := marks[0].Children[0].Children
+	if len(deep) != 1 || deep[0].Title != "Deeper still" || deep[0].Page != 3 {
+		t.Errorf("the third level is %+v, want Deeper still on page 3", deep)
+	}
+	if len(marks[1].Children) != 0 {
+		t.Errorf("Two came out with children %+v; the stack did not unwind", marks[1].Children)
+	}
+}
+
+func TestNestingNothingIsNoBookmarks(t *testing.T) {
+	marks, err := ops.Nest(nil)
+	if err != nil || marks != nil {
+		t.Errorf("Nest(nil) = %+v, %v; want no bookmarks and no complaint", marks, err)
+	}
+}
+
+// TestARungMissingFromTheTreeIsRefusedByItsOwnType is why the refusal is a type
+// and not a sentence: Nest answers a caller holding rows, ParseOutline answers
+// a person holding a file, and the same fault has to be told two ways.
+func TestARungMissingFromTheTreeIsRefusedByItsOwnType(t *testing.T) {
+	marks, err := ops.Nest([]ops.Level{
+		{Title: "One", Page: 1},
+		{Title: "Adrift", Page: 2, Depth: 2},
+	})
+	if marks != nil {
+		t.Errorf("returned %+v beside the error; a half-built tree is worse than none", marks)
+	}
+	var deep *ops.DepthError
+	if !errors.As(err, &deep) {
+		t.Fatalf("Nest refused with %T (%v), want a *ops.DepthError", err, err)
+	}
+	if deep.Row != 1 || deep.Depth != 2 || deep.Under != 0 {
+		t.Errorf("the error says row %d at depth %d under %d, want row 1 depth 2 under 0",
+			deep.Row, deep.Depth, deep.Under)
+	}
+	const says = "entry 2: indented 2 levels under one at 0, so a level is missing between them"
+	if deep.Error() != says {
+		t.Errorf("it reads %q, want %q", deep, says)
+	}
+	// And the same rows read out of a file say it in lines, counting the blank
+	// one that is not an entry.
+	_, err = ops.ParseOutline("One\t1\n\n    Adrift\t2\n")
+	if err == nil || err.Error() != "line 3: indented 2 levels under one at 0, so a level is missing between them" {
+		t.Errorf("from a file it reads %v, which does not name line 3", err)
 	}
 }
 
