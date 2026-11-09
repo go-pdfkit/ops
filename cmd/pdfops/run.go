@@ -1410,72 +1410,12 @@ func runOutline(c *context, args []string) error {
 	if err != nil {
 		return err
 	}
-	marks, err := parseOutline(string(text))
+	marks, err := ops.ParseOutline(string(text))
 	if err != nil {
 		return err
 	}
 	d.SetOutline(marks)
 	return save(d, fs.Arg(1))
-}
-
-// parseOutline reads a bookmark file: one bookmark a line, a title, a tab and
-// a page number, with two spaces of indent for each level of nesting.
-//
-//	Introduction→1
-//	  Why→2
-//	Chapter one→7
-//
-// A line it cannot read is an error naming the line, because a table of
-// contents quietly missing an entry is worse than one that refuses to be
-// written.
-func parseOutline(text string) ([]ops.Bookmark, error) {
-	type level struct {
-		depth int
-		marks *[]ops.Bookmark
-	}
-	var root []ops.Bookmark
-	stack := []level{{depth: -1, marks: &root}}
-
-	for i, line := range strings.Split(text, "\n") {
-		n := i + 1
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		body := strings.TrimLeft(line, " ")
-		indent := len(line) - len(body)
-		if indent%2 != 0 {
-			return nil, fmt.Errorf("line %d: indented by %d spaces, which is not a whole number of levels of two", n, indent)
-		}
-		depth := indent / 2
-
-		title, page, ok := strings.Cut(body, "\t")
-		if !ok {
-			return nil, fmt.Errorf("line %d: expected a title, a tab and a page number", n)
-		}
-		title = strings.TrimSpace(title)
-		if title == "" {
-			return nil, fmt.Errorf("line %d: the title is empty", n)
-		}
-		p, err := strconv.Atoi(strings.TrimSpace(page))
-		if err != nil {
-			return nil, fmt.Errorf("line %d: %q is not a page number", n, strings.TrimSpace(page))
-		}
-		if p < 1 {
-			return nil, fmt.Errorf("line %d: page %d, and pages start at 1", n, p)
-		}
-
-		for len(stack) > 1 && stack[len(stack)-1].depth >= depth {
-			stack = stack[:len(stack)-1]
-		}
-		if depth > stack[len(stack)-1].depth+1 {
-			return nil, fmt.Errorf("line %d: indented %d levels under one at %d, so a level is missing between them",
-				n, depth, stack[len(stack)-1].depth)
-		}
-		parent := stack[len(stack)-1].marks
-		*parent = append(*parent, ops.Bookmark{Title: title, Page: p})
-		stack = append(stack, level{depth: depth, marks: &(*parent)[len(*parent)-1].Children})
-	}
-	return root, nil
 }
 
 // paperSizes are the page sizes a person names rather than measures, in

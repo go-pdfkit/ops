@@ -616,6 +616,11 @@ Chapter one	7
 A line it cannot read is an error naming the line, because a table of contents
 quietly missing an entry is worse than one that refuses to be written.
 
+That grammar is `ops.ParseOutline(text string) ([]Bookmark, error)`, in the
+library rather than in the command, so that anything else asked to write a
+table of contents — the browser workbench among them — accepts exactly the same
+file instead of carrying a second parser for it.
+
 `resize` sets how big a page **is**; `crop` sets what of it **shows**. Two
 verbs, because they are two questions. A size is a box in points, or one of
 `a3`, `a4`, `a5`, `letter`, `legal`, `tabloid` — derived from their definitions
