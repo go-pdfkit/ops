@@ -194,6 +194,47 @@ func TestAContentsAtTheEndTakesTheLastPagesSize(t *testing.T) {
 	}
 }
 
+// TestAContentsInTheMiddleMovesOnlyWhatIsBehindIt is the edge of the shifting
+// rule, measured rather than reasoned about: a contents page put between pages
+// two and three moves the pages behind it and leaves the two in front where
+// they are, so an entry pointing at page 1 is still printed as 1 and one
+// pointing at page 3 is printed as 4.
+//
+// ⛔ The same expression prints the numbers and ShiftBookmarks moves the tree,
+// so one of them being right is not evidence about the other: both are checked.
+func TestAContentsInTheMiddleMovesOnlyWhatIsBehindIt(t *testing.T) {
+	d := contentsFixture(t, 4, 595, 842)
+	marks := []ops.Bookmark{
+		{Title: "Preface", Page: 1},
+		{Title: "Chapter one", Page: 3},
+	}
+
+	added, err := d.ContentsPage(marks, ops.ContentsOptions{Before: 3})
+	if err != nil {
+		t.Fatalf("ContentsPage: %v", err)
+	}
+	if added != 1 || d.PageCount() != 5 {
+		t.Fatalf("%d page(s) added, %d in all", added, d.PageCount())
+	}
+
+	said := pageText(t, d, 3)
+	if !strings.Contains(said, "(Preface)") || !strings.Contains(said, "(1)") {
+		t.Errorf("the preface is not printed as page 1:\n%s", said)
+	}
+	if !strings.Contains(said, "(4)") {
+		t.Errorf("chapter one is not printed as page 4:\n%s", said)
+	}
+	if strings.Contains(said, "(2)") {
+		t.Errorf("a number was moved that should not have been:\n%s", said)
+	}
+	// And the tree moves the same way.
+	moved := ops.ShiftBookmarks(marks, 3, added)
+	if moved[0].Page != 1 || moved[1].Page != 4 {
+		t.Errorf("the tree came out on pages %d and %d, want 1 and 4",
+			moved[0].Page, moved[1].Page)
+	}
+}
+
 // TestALongTitleIsCutRatherThanDrawnOverItsPageNumber: two strings overlapping
 // is a line that reads as neither.
 func TestALongTitleIsCutRatherThanDrawnOverItsPageNumber(t *testing.T) {
