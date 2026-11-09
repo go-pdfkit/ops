@@ -82,6 +82,7 @@ pdfops attach -file figures.csv -description "the figures" report.pdf with.pdf
 pdfops detach -name figures.csv with.pdf without.pdf
 pdfops outline -from toc.txt book.pdf bookmarked.pdf
 pdfops outline -drop bookmarked.pdf plain.pdf
+pdfops contents -from toc.txt -bookmarks book.pdf with-contents.pdf
 pdfops info file.pdf
 pdfops metadata -set 'Title=The Report' -set Author=Someone draft.pdf titled.pdf
 pdfops metadata -clear draft.pdf anonymous.pdf
@@ -620,6 +621,31 @@ That grammar is `ops.ParseOutline(text string) ([]Bookmark, error)`, in the
 library rather than in the command, so that anything else asked to write a
 table of contents — the browser workbench among them — accepts exactly the same
 file instead of carrying a second parser for it.
+
+`contents` writes the same file as a **printed** table of contents — a page of
+the document, each line a title at the left, its page number at the right and
+dots leading to it:
+
+```
+Contents
+
+Introduction ....................................... 2
+  Why .............................................. 3
+Chapter one ........................................ 8
+```
+
+⛔ **The numbers it prints are moved by the pages it adds.** A contents page put
+in front of a document pushes every page of it down, so an entry that pointed at
+page 7 is on page 8 afterwards, and printing the 7 would send a reader one page
+short of every heading in the book. `ops.ContentsPage` returns how many pages it
+added and `ops.ShiftBookmarks(marks, from, by)` is the same rule for the
+`/Outlines` tree — which is what `-bookmarks` does, so the printed number and
+the bookmark land on the same page. An entry pointing at a page the document has
+not got is refused by name rather than printed.
+
+It runs onto as many pages as it needs, because a table of contents quietly
+missing its last nine entries is worse than one that refuses to be written: the
+first is a document that looks finished.
 
 A caller that already has the entries, rather than a file of them, goes through
 `ops.Nest([]Level) ([]Bookmark, error)`: a title, a page and a depth in reading

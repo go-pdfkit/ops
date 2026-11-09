@@ -70,6 +70,7 @@ var commands = []command{
 	{"strip", "[-annotations] [-bookmarks] <in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
 	{"sanitize", "<in.pdf> <out.pdf>", "remove what runs rather than shows: scripts, launching, embedded files", runSanitize},
 	{"outline", "(-drop | -from <toc.txt>) <in.pdf> <out.pdf>", "replace or remove the bookmarks", runOutline},
+	{"contents", "-from <toc.txt> [-before <page>] [-title <words>] [-size <pt>] [-margin <pt>] [-bookmarks] <in.pdf> <out.pdf>", "write a printed table of contents as a page of the document", runContents},
 	{"flatten", "<in.pdf> <out.pdf>", "draw the annotations into the page and drop them", runFlatten},
 	{"compress", "<in.pdf> <out.pdf>", "pack the objects into compressed streams", runCompress},
 	{"encrypt", "-user <password> [-owner <password>] [-allow <what>] [-aes128] <in.pdf> <out.pdf>", "protect the file with a password", runEncrypt},
@@ -1415,6 +1416,59 @@ func runOutline(c *context, args []string) error {
 		return err
 	}
 	d.SetOutline(marks)
+	return save(d, fs.Arg(1))
+}
+
+// runContents writes a printed table of contents into the document, from the
+// same file `outline -from` reads.
+//
+// ⛔ -bookmarks writes the /Outlines tree from the same entries AND MOVES THEM
+// BY THE PAGE THE CONTENTS ADDED, which is the pair of calls ContentsPage's own
+// documentation prescribes. Writing the tree from the unshifted entries would
+// put every bookmark one page short of its heading, and this verb is the place
+// somebody would most expect to be able to ask for both at once.
+func runContents(c *context, args []string) error {
+	fs := flags("contents")
+	from := fs.String("from", "", "a file of entries: Title, a tab, a page number, two spaces of indent per level")
+	before := fs.Int("before", 1, "the page it goes in front of; one past the last appends it")
+	title := fs.String("title", "", `the heading, "Contents" by default`)
+	size := fs.Float64("size", 0, "the type size of an entry in points; the heading is half as large again")
+	margin := fs.Float64("margin", 0, "the room left around the text, in points; 56 is about two centimetres")
+	marksToo := fs.Bool("bookmarks", false, "write the bookmarks from the same entries as well")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *from == "" {
+		return fmt.Errorf("expected -from <toc.txt>")
+	}
+	if err := wantArgs(fs, 2, "-from <toc.txt> <in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	text, err := os.ReadFile(*from)
+	if err != nil {
+		return err
+	}
+	marks, err := ops.ParseOutline(string(text))
+	if err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	added, err := d.ContentsPage(marks, ops.ContentsOptions{
+		Title:  *title,
+		Before: *before,
+		Size:   *size,
+		Margin: *margin,
+	})
+	if err != nil {
+		return err
+	}
+	if *marksToo {
+		d.SetOutline(ops.ShiftBookmarks(marks, *before, added))
+	}
+	fmt.Fprintf(c.out, "wrote a table of contents on %d page(s)\n", added)
 	return save(d, fs.Arg(1))
 }
 
