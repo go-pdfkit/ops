@@ -60,10 +60,26 @@ type Redaction struct {
 //     XObject is SHARED — editing it to clean one page would change every page
 //     that draws it. [Doc.RecolourText] stops at the same wall, and counts what
 //     it could not reach for the same reason.
-//   - an image. The spec is explicit that a mask or a clip will not do and the
-//     pixels themselves must be destroyed; until this can re-encode an image
-//     with those pixels overwritten, an image in the region is a refusal.
+//
+//   - an image it cannot write back. The spec is explicit that a mask or a clip
+//     will not do and the pixels themselves must be destroyed, so a picture
+//     whose samples this cannot rewrite is a refusal naming the reason: a
+//     turned or skewed placement, a picture the page draws more than once, a
+//     stencil or a soft mask, a palette, more or fewer than eight bits a
+//     sample, a colour space this does not know. Plain samples and JPEGs are
+//     blanked.
+//
+//     ⛔ A JPEG IS WRITTEN BACK AS PLAIN SAMPLES, not as another JPEG.
+//     Re-encoding re-quantises every block of the picture, including the ones
+//     nobody asked about, so a redaction would visibly degrade the rest of the
+//     page; what this writes instead is exactly what a reader of the original
+//     would have seen, with the region destroyed. The picture loses its
+//     compression and the file grows — a photograph as Flate is several times
+//     the same photograph as a JPEG — which is the trade, and the caller's to
+//     know about.
+//
 //   - an annotation. Its /Contents can hold the very words being redacted.
+//
 //   - a text-showing operator only PART of whose text is inside the region.
 //     Blanking it would take away text the caller did not ask about, and
 //     rewriting it cannot be done by re-emitting the surviving words: the

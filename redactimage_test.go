@@ -229,9 +229,16 @@ func TestWhatARedactionOverAPictureRefuses(t *testing.T) {
 		{"skewed", "q 100 20 0 100 50 50 cm /Im1 Do Q", nil, "turned or skewed"},
 		{"drawn twice", "q 100 0 0 100 50 50 cm /Im1 Do Q q 20 0 0 20 0 0 cm /Im1 Do Q", nil,
 			`draws "Im1" 2 times`},
-		{"a JPEG", "q 100 0 0 100 50 50 cm /Im1 Do Q", func(d reader.Dict) {
+		// ⛔ NOT "A JPEG" ANY MORE. A DCTDecode picture is decoded and written
+		// back as plain samples since #82; what stays refused here is a stream
+		// that SAYS DCTDecode and does not hold a JPEG, which is a file this
+		// cannot read rather than one it will not.
+		{"a picture that says JPEG and is not one", "q 100 0 0 100 50 50 cm /Im1 Do Q", func(d reader.Dict) {
 			d["Filter"] = reader.Name("DCTDecode")
-		}, "samples are still DCTDecode"},
+		}, "a JPEG this cannot read"},
+		{"a filter this does not undo", "q 100 0 0 100 50 50 cm /Im1 Do Q", func(d reader.Dict) {
+			d["Filter"] = reader.Name("JPXDecode")
+		}, "samples are still JPXDecode"},
 		{"an image mask", "q 100 0 0 100 50 50 cm /Im1 Do Q", func(d reader.Dict) {
 			d["ImageMask"] = reader.Bool(true)
 		}, "image mask"},

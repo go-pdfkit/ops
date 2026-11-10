@@ -1056,19 +1056,48 @@ the region are **overwritten and the picture is written back**. A scanned page
 is one picture, so without this the verb refused everything a scanner produces.
 
 What this does it to is a picture whose samples are **plain** — one the reader
-has already unfiltered — eight bits a component, `DeviceGray` or `DeviceRGB`,
-drawn **upright** and drawn **once** on the page. Each of the others is refused
-by its own name, with the reason:
+has already unfiltered — or a **JPEG**, eight bits a component, `DeviceGray` or
+`DeviceRGB`, drawn **upright** and drawn **once** on the page. Each of the
+others is refused by its own name, with the reason:
 
 | refused | why |
 | --- | --- |
-| still `DCTDecode` or `JPXDecode` | its samples would have to be decoded and re-encoded, which is a size and a quality question of its own: re-encoding as Flate makes a scan five to twenty times larger, and re-encoding as JPEG re-compresses every pixel of the page, including the ones nobody asked about |
+| still `JPXDecode`, or any other filter this does not undo | its samples would have to be decoded and written back, and a decoder this does not have is not one to guess at |
 | drawn **turned or skewed** | the box a turned picture covers looks exactly like the box an upright one covers, so mapping the region into its samples by that box would destroy more than was asked for — which is the other way a redaction betrays its caller. `extract.Image.Matrix` exists for this: `b` and `c` are zero for an upright picture, and stay zero for a flipped one |
 | drawn **more than once** on the page | replacing the picture replaces it for every `Do` that names it, so blanking it for one placement blanks it for the others, in a different place each time |
 | an **inline** image | it is written into the content stream rather than held as a resource, so there is nothing to write back in its place |
 | `/ImageMask`, `/SMask`, `/Mask`, `/Decode` | each changes what a sample means, and a sample set to zero under one of them is not necessarily a destroyed one |
 | `/Indexed`, `/ICCBased`, `/DeviceCMYK`, anything else | in an indexed space a zero is the palette's **first** colour, which may be white; in the others the component count has to be read out of a stream. What a destroyed sample holds there is not something to guess at |
 | samples that are not all there | the stream is shorter or longer than `Width × Height × components`, so what is in it is not what it says |
+
+#### A JPEG is written back as plain samples, not as another JPEG
+
+⛔ **Re-encoding would change the pixels nobody asked about.** A JPEG is
+re-quantised block by block, so writing the blanked picture back as a JPEG
+would degrade **every** block of it — the whole photograph, to destroy a corner
+of it. What this writes instead is exactly what a reader of the original would
+have seen, with the region destroyed, and the test for it decodes the original
+itself and compares the kept samples **byte for byte** against that decode.
+Asserting a colour would be asserting what an encoder does with it, which is a
+different subject and a moving one.
+
+The picture loses its compression: a photograph as Flate is several times the
+same photograph as a JPEG, and that is the trade. It is paid only by a picture
+a region actually reaches — one nobody redacted over keeps its `DCTDecode`
+stream byte for byte.
+
+Two more refusals belong to this path:
+
+| refused | why |
+| --- | --- |
+| a **CMYK** JPEG | there is no faithful CMYK to RGB without the output profile the file does not carry, so a conversion here would change every colour on the page |
+| more than **100 megapixels** | a JPEG says how big it is in a handful of bytes and the decoder then allocates `width × height × 3`, so a file of twenty-five bytes can ask for gigabytes. The size is read from the **header** and refused before anything is decoded — checking after the decode is checking after the allocation. A 600 dpi A4 page is about 35 megapixels |
+
+The test for that ceiling is a real bomb — thirty-nine bytes declaring 20000 by
+20000 and not one sample — run against the **real** bound rather than a knob
+lowered for the occasion, and it asserts that the decoder was never reached:
+the refusal message alone reads the same whether the check runs before the
+decode or after it.
 
 ⛔ **The original picture is not left in the file.** The page's `/Resources` are
 **rebuilt** with the blanked picture in place of the original rather than copied
