@@ -1,7 +1,11 @@
 package ops
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/draw"
+	"image/jpeg"
 
 	"github.com/go-pdfkit/extract"
 	"github.com/go-pdfkit/reader"
@@ -131,6 +135,24 @@ func blankedImage(page int, im extract.Image, all []extract.Image, quads []Quad)
 	// then has no width or no height, and a box with no width overlaps nothing —
 	// so such a picture never reaches this function at all. The inverse below
 	// would divide by that zero; it cannot be asked to.
+	// ⛔ A JPEG IS DECODED AND WRITTEN BACK AS PLAIN SAMPLES, which is the only
+	// way to destroy its pixels that cannot be accused of changing the ones
+	// nobody asked about. Re-encoding it as a JPEG re-quantises the WHOLE
+	// picture — every block, not just the blanked ones — so a redaction would
+	// visibly degrade the rest of the page. What this does instead is write
+	// down exactly what a reader of the original would have seen, with the
+	// region destroyed, and lose the JPEG rather than the fidelity.
+	//
+	// ⛔ IT COSTS SIZE AND THE TEST SAYS SO: a photograph as Flate is several
+	// times a photograph as JPEG. That is the trade, and it is the caller's to
+	// know about rather than ours to hide.
+	if im.Filter == "DCTDecode" {
+		plain, err := jpegSamples(im)
+		if err != nil {
+			return no("%s", err)
+		}
+		im = plain
+	}
 	if im.Filter != "" {
 		return no("its samples are still %s, and re-encoding them is not in this release", im.Filter)
 	}
@@ -168,6 +190,96 @@ func blankedImage(page int, im extract.Image, all []extract.Image, quads []Quad)
 		blankSamples(data, im, comps, q)
 	}
 	return plannedImage{name: reader.Name(im.Name), dict: im.Dict, data: data}, nil
+}
+
+// jpegMegapixels bounds what will be decoded. A JPEG says its size in a
+// handful of bytes and the decoder then allocates width × height × 3, so a
+// file of a few kilobytes can ask for gigabytes. A hundred megapixels is far
+// past any scan — a 600 dpi A4 page is about 35 — and the refusal names the
+// size, so somebody with a genuinely enormous picture learns why rather than
+// watching the machine swap.
+//
+// ⛔ A CONST, NOT A KNOB A TEST LOWERS. The test that proves this feeds a real
+// JPEG header claiming 20000 by 20000 in twenty-five bytes, so what runs in CI
+// is the bound callers get rather than one arranged for the occasion.
+const jpegMegapixels = 100
+
+// decodeJPEG is replaceable so that a test can hand back the shapes a real
+// encoder will not produce — image/jpeg writes Gray, YCbCr and RGBA and has no
+// way to write the CMYK the refusal below is about, so without this seam that
+// refusal would be a claim no test could reach.
+var decodeJPEG = jpeg.Decode
+
+// jpegSamples decodes a DCTDecode picture into the samples a reader would have
+// drawn, so that the rest of this file can blank them.
+//
+// ⛔ THE SIZE IS READ FROM THE HEADER BEFORE ANYTHING IS DECODED. Checking
+// after the decode is checking after the allocation, which is the whole of
+// what the bound is for.
+func jpegSamples(im extract.Image) (extract.Image, error) {
+	cfg, err := jpeg.DecodeConfig(bytes.NewReader(im.Data))
+	if err != nil {
+		return im, fmt.Errorf("its samples are a JPEG this cannot read: %w", err)
+	}
+	if px := cfg.Width * cfg.Height; px > jpegMegapixels*1e6 {
+		return im, fmt.Errorf("it is %d by %d samples, past the %d megapixels this will decode",
+			cfg.Width, cfg.Height, jpegMegapixels)
+	}
+	img, err := decodeJPEG(bytes.NewReader(im.Data))
+	if err != nil {
+		return im, fmt.Errorf("its samples are a JPEG this cannot read: %w", err)
+	}
+	b := img.Bounds()
+	if b.Dx() != im.Width || b.Dy() != im.Height {
+		// ⛔ The dictionary and the picture disagreeing is not something to
+		// average out: every box this maps into the samples comes from the
+		// dictionary's size, so blanking against the other one would destroy
+		// the wrong rows.
+		return im, fmt.Errorf("its dictionary says %d by %d and the JPEG in it is %d by %d",
+			im.Width, im.Height, b.Dx(), b.Dy())
+	}
+
+	var data []byte
+	var space reader.Name
+	switch src := img.(type) {
+	case *image.Gray:
+		space, data = "DeviceGray", make([]byte, 0, b.Dx()*b.Dy())
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			data = append(data, src.Pix[(y-b.Min.Y)*src.Stride:][:b.Dx()]...)
+		}
+	case *image.CMYK:
+		// ⛔ REFUSED RATHER THAN CONVERTED. There is no faithful CMYK to RGB
+		// without the output profile this file does not carry, so a conversion
+		// here would change every colour on the page to destroy a corner of it.
+		return im, fmt.Errorf("it is a CMYK JPEG, and turning those colours into RGB without " +
+			"the profile the file does not carry would change every one of them")
+	default:
+		space = "DeviceRGB"
+		rgba := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+		draw.Draw(rgba, rgba.Bounds(), img, b.Min, draw.Src)
+		data = make([]byte, 0, b.Dx()*b.Dy()*3)
+		for y := 0; y < b.Dy(); y++ {
+			row := rgba.Pix[y*rgba.Stride:][:b.Dx()*4]
+			for x := 0; x < len(row); x += 4 {
+				data = append(data, row[x], row[x+1], row[x+2])
+			}
+		}
+	}
+
+	// The dictionary now describes plain samples. Width and Height are the
+	// ones it already carried, which the check above proved are the picture's.
+	dict := reader.Dict{}
+	for k, v := range im.Dict {
+		switch k {
+		case "Filter", "DecodeParms", "DP", "F", "Length":
+			continue
+		}
+		dict[k] = v
+	}
+	dict["ColorSpace"] = space
+	dict["BitsPerComponent"] = reader.Integer(8)
+	im.Dict, im.Data, im.Filter = dict, data, ""
+	return im, nil
 }
 
 // blankSamples destroys the samples of one quad's box, mapped from the page
