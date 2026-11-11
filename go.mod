@@ -5,6 +5,7 @@ go 1.27.2
 require (
 	github.com/go-gfx/gfx v0.41.0
 	github.com/go-images/images v0.3.0
+	github.com/go-images/jpeg v0.3.0
 	github.com/go-ooxml/ooxml v0.7.0
 	github.com/go-ooxml/opc v0.2.1
 	github.com/go-pdfkit/document v0.2.0
@@ -28,7 +29,6 @@ require (
 	github.com/go-browserhttp/browserhttp v0.2.0 // indirect
 	github.com/go-gfx/oksvg v0.2.0 // indirect
 	github.com/go-images/gif v0.2.0 // indirect
-	github.com/go-images/jpeg v0.3.0 // indirect
 	github.com/go-images/jpeg2000 v0.14.0 // indirect
 	github.com/go-images/png v0.2.0 // indirect
 	github.com/go-opentype/fonts v0.14.0 // indirect
