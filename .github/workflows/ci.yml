@@ -35,8 +35,28 @@ jobs:
           check-latest: true
           cache: true
 
+      # ⛔⛔ THIS STEP USED TO BE `sudo apt-get update && sudo apt-get install …`
+      # AND A THIRD PARTY'S DNS HELD EVERY RELEASE HOSTAGE. On 2026-11-11 it
+      # failed four times in half an hour on one merge commit, every time with
+      # `Temporary failure resolving 'azure.archive.ubuntu.com'`, while the
+      # pull request it came from had been green on this same workflow minutes
+      # earlier. `ghrelease` will not tag while main is red — correctly — so
+      # nothing about this repository was wrong and nothing could be released,
+      # and the step had no way to say which of the two it was (#90).
+      #
+      # `aptneed` rewrites /etc/apt/apt-mirrors.txt to the canonical archive
+      # after the first mirror failure — that one file is what every source on
+      # a runner resolves through, so naming archive.ubuntu.com in a source
+      # would change nothing — and it refuses to retry a package apt cannot
+      # locate, which is a name and not weather.
+      #
+      # ⛔ --need pdftoppm, because apt saying yes is not the binary being
+      # there. The two render tests `t.Fatal` when CI is set and pdftoppm is
+      # missing, so a package renamed upstream would otherwise reach them.
       - name: Install poppler, the foreign judge the render tests print by
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends poppler-utils
+        run: |
+          GOBIN=/usr/local/bin go install github.com/go-fleettools/fleettools/cmd/aptneed@latest
+          sudo aptneed --need pdftoppm poppler-utils
 
       - name: go vet
         run: go vet ./...
