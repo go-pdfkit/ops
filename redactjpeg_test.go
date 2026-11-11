@@ -130,7 +130,14 @@ var bottomQuarter = Redaction{Page: 1, Quads: []Quad{{
 //
 // ⛔⛔ THE KEPT SAMPLES ARE COMPARED AGAINST THIS TEST'S OWN DECODE OF THE
 // ORIGINAL JPEG, BYTE FOR BYTE. That is the whole claim the lossless path
-// makes. Asserting a colour instead would be asserting what an encoder does
+// makes.
+//
+// ⛔ AND THE TWO DECODERS ARE NOT THE SAME ONE. This file encodes and decodes
+// with the standard library's image/jpeg; redactimage.go decodes with
+// go-images/jpeg, the fork go-pdfkit/render shows the reader. So the equality
+// below is also the statement that the two agree on a three-component picture
+// — and the day they stop agreeing, this goes red and names the row and column
+// where. Importing the fork here as well would have thrown that away. Asserting a colour instead would be asserting what an encoder does
 // with it, which is a different subject and a moving one; and asserting "it
 // still looks about the same" would pass for a picture re-encoded into mud —
 // which is what re-encoding as a JPEG would have done to every block of it,

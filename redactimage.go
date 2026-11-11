@@ -5,8 +5,21 @@ import (
 	"fmt"
 	"image"
 	"image/draw"
-	"image/jpeg"
 
+	// ⛔ THE FLEET'S DECODER, NOT THE STANDARD LIBRARY'S. What this promises to
+	// write back is "what a reader would have seen", and the reader is
+	// go-pdfkit/render, which decodes /DCTDecode with this fork: Go's own
+	// image/jpeg with a four-component picture's chroma upsampled the way
+	// libjpeg does rather than by repeating each sample. Decoding here with a
+	// different decoder would make that promise true of a picture nobody was
+	// shown.
+	//
+	// ⛔ AND IT IS NOT ABOUT THE BINARY. This was first written claiming it
+	// saved linking a second decoder; `go list -deps` says otherwise, before
+	// and after. image/jpeg stays, because go-gfx/gfx/codec, go-images/images
+	// and go-pdfkit/html2pdf each import it — go-images/images imports BOTH.
+	// That is a wider divergence than this file, filed rather than fixed here.
+	"github.com/go-images/jpeg"
 	"github.com/go-pdfkit/extract"
 	"github.com/go-pdfkit/reader"
 )
