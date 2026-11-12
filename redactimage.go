@@ -8,17 +8,22 @@ import (
 
 	// ⛔ THE FLEET'S DECODER, NOT THE STANDARD LIBRARY'S. What this promises to
 	// write back is "what a reader would have seen", and the reader is
-	// go-pdfkit/render, which decodes /DCTDecode with this fork: Go's own
-	// image/jpeg with a four-component picture's chroma upsampled the way
-	// libjpeg does rather than by repeating each sample. Decoding here with a
-	// different decoder would make that promise true of a picture nobody was
-	// shown.
+	// go-pdfkit/render, whose import list holds github.com/go-images/jpeg and
+	// not image/jpeg: Go's own decoder with a four-component picture's chroma
+	// upsampled the way libjpeg does rather than by repeating each sample.
+	// Decoding here with a different decoder would make that promise true of a
+	// picture nobody was shown.
 	//
-	// ⛔ AND IT IS NOT ABOUT THE BINARY. This was first written claiming it
-	// saved linking a second decoder; `go list -deps` says otherwise, before
-	// and after. image/jpeg stays, because go-gfx/gfx/codec, go-images/images
-	// and go-pdfkit/html2pdf each import it — go-images/images imports BOTH.
-	// That is a wider divergence than this file, filed rather than fixed here.
+	// ⛔ THE REASON IS NOT BINARY SIZE, AND THE OTHER IMPORTERS ARE NOT A
+	// DEFECT — two claims this comment made before anyone checked them.
+	// `go list -deps` says image/jpeg stays either way, pulled in by
+	// go-gfx/gfx/codec, go-images/images and go-pdfkit/html2pdf. And
+	// go-images/images imports both ON PURPOSE: its own doc says PNG and JPEG
+	// decode through the standard library, while partial.go uses the fork for
+	// DecodePartial and states the four-component divergence in so many words
+	// — "Decode's standard-library path is untouched, so anything relying on
+	// its exact bytes still gets them". Two issues were nearly filed on that.
+	// Reading the dependency's source is what stopped them.
 	"github.com/go-images/jpeg"
 	"github.com/go-pdfkit/extract"
 	"github.com/go-pdfkit/reader"
