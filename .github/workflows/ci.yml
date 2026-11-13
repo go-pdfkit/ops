@@ -29,9 +29,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # ⛔ 1.27.4 BECAUSE THE STEP BELOW NEEDS IT, and GOTOOLCHAIN=local means
+      # the runner will not quietly fetch a newer one — which is the setting
+      # that made this a visible failure instead of a silent toolchain swap.
+      # fleettools v0.111.0 declares `go >= 1.27.4`, so 1.27.3 refused to
+      # install aptneed at all: `requires go >= 1.27.4 (running go 1.27.3)`.
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           check-latest: true
           cache: true
 
