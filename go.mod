@@ -12,7 +12,7 @@ require (
 	github.com/go-pdfkit/extract v0.11.0
 	github.com/go-pdfkit/forms v0.6.0
 	github.com/go-pdfkit/pdffont v0.4.0
-	github.com/go-pdfkit/reader v0.17.0
+	github.com/go-pdfkit/reader v0.19.1
 	github.com/go-pdfkit/render v0.69.1
 	github.com/go-pdfkit/xfa v0.22.0
 	github.com/go-richdoc/markdown v0.13.0
