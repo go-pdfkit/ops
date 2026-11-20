@@ -2,6 +2,7 @@ package ops
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -30,15 +31,8 @@ import (
 // A Filling is a document's form, opened so that it can be filled in and
 // written back.
 type Filling struct {
-	src  []byte
-	doc  *reader.Document
+	increment
 	form *forms.Form
-	// next is the object number to hand out for anything new.
-	next int
-	// prev is where the file's own cross-reference section begins, which the
-	// update has to point back at. A file that does not say is one the reader
-	// had to repair, and those are refused before this is ever set.
-	prev int
 	// formRef is where the AcroForm dictionary lives, when it lives somewhere
 	// of its own rather than written into the catalogue.
 	formRef reader.Ref
@@ -73,30 +67,11 @@ func openFormIn(b []byte, d *reader.Document) (*Filling, bool, error) {
 	if !ok {
 		return nil, false, nil
 	}
-	// A document written through a key has every string and every stream in
-	// it written through that key too, so anything appended would have to be
-	// as well. That is not done here, and writing an update in the clear
-	// beside encrypted objects makes a file nothing can read.
-	if d.Encrypted() {
-		return nil, false, fmt.Errorf("ops: the document is encrypted, and this does not yet write into one")
+	inc, err := openIncrement(b, d)
+	if err != nil {
+		return nil, false, err
 	}
-	// Where the file says its own cross-reference section begins is what the
-	// update points back at. This is asked before anything else about the
-	// shape of the file, because a file that does not say cannot be added to
-	// at all, whatever else is wrong with it.
-	prev, ok := lastStartxref(b)
-	if !ok {
-		return nil, false, fmt.Errorf("ops: the file does not say where its cross-reference table is, so nothing can be appended to it")
-	}
-	// A file this package has had to repair has no cross-reference section
-	// worth pointing back at, however confidently it says where one is: an
-	// update appended to it would name offsets into a table that was never
-	// right. Such a file is filled in by writing it out whole, which is not
-	// what this does.
-	if d.Repaired() {
-		return nil, false, fmt.Errorf("ops: the file had to be repaired to be read, so it cannot be added to")
-	}
-	f := &Filling{src: b, doc: d, form: form, prev: prev}
+	f := &Filling{increment: inc, form: form}
 	f.next = f.highestObject() + 1
 	if catalog, err := d.Catalog(); err == nil {
 		if ref, ok := catalog.Get("AcroForm").(reader.Ref); ok {
@@ -119,23 +94,20 @@ func (f *Filling) Fill(name, value string) error { return f.form.Fill(name, valu
 // anything, and one that says too little would have this package overwrite
 // what it names.
 func (f *Filling) highestObject() int {
-	high := 0
-	if size, ok := reader.ToInt(f.doc.Trailer().Get("Size")); ok && size > 0 {
-		high = int(size) - 1
-	}
 	// Every object the form knows about is checked against that, since those
 	// are the ones whose numbers this is about to write beside.
+	var refs []reader.Ref
 	for _, fld := range f.form.Fields() {
-		if ref, ok := fld.Ref(); ok && ref.Num > high {
-			high = ref.Num
+		if ref, ok := fld.Ref(); ok {
+			refs = append(refs, ref)
 		}
 		for _, w := range fld.Widgets {
-			if ref, ok := w.Ref(); ok && ref.Num > high {
-				high = ref.Num
+			if ref, ok := w.Ref(); ok {
+				refs = append(refs, ref)
 			}
 		}
 	}
-	return high
+	return f.highest(refs...)
 }
 
 // Bytes writes the original file with the changes appended to it.
@@ -160,7 +132,8 @@ func (f *Filling) Bytes() ([]byte, error) {
 		delete(dict, "NeedAppearances")
 		written[f.formRef.Num] = dict
 	}
-	return f.append(written)
+	out, _ := f.append(written, nil)
+	return out, nil
 }
 
 // update works out what has to be written for one field that was filled in.
@@ -318,28 +291,106 @@ func textString(s string) reader.String {
 	return reader.String(out)
 }
 
+// ErrEncrypted is what adding to an encrypted document is refused with. A
+// document written through a key has every string and every stream in it
+// written through that key too, so anything appended would have to be as well.
+// That is not done here, and writing an update in the clear beside encrypted
+// objects makes a file nothing can read.
+var ErrEncrypted = errors.New("ops: the document is encrypted, and this does not yet write into one")
+
+// ErrNotAppendable is what a file that cannot be added to is refused with: one
+// that does not say where its cross-reference section is, or that had to be
+// repaired to be read.
+var ErrNotAppendable = errors.New("ops: the file cannot be appended to")
+
+// An increment is an incremental update being made to a file (ISO 32000-1
+// §7.5.6): the file itself, untouched, and what will be appended to it. It is
+// shared by everything in this package that writes into a document rather than
+// rebuilding one — filling a form and signing it.
+type increment struct {
+	src []byte
+	doc *reader.Document
+	// next is the object number to hand out for anything new.
+	next int
+	// prev is where the file's own cross-reference section begins, which the
+	// update has to point back at. A file that does not say is one the reader
+	// had to repair, and those are refused before this is ever set.
+	prev int
+}
+
+// openIncrement says whether a file can be added to at all, and prepares the
+// update if it can.
+func openIncrement(b []byte, d *reader.Document) (increment, error) {
+	if d.Encrypted() {
+		return increment{}, ErrEncrypted
+	}
+	// Where the file says its own cross-reference section begins is what the
+	// update points back at. This is asked before anything else about the
+	// shape of the file, because a file that does not say cannot be added to
+	// at all, whatever else is wrong with it.
+	prev, ok := lastStartxref(b)
+	if !ok {
+		return increment{}, fmt.Errorf("%w: the file does not say where its cross-reference table is, so nothing can be appended to it", ErrNotAppendable)
+	}
+	// A file this package has had to repair has no cross-reference section
+	// worth pointing back at, however confidently it says where one is: an
+	// update appended to it would name offsets into a table that was never
+	// right. Such a file is written out whole, which is not what this does.
+	if d.Repaired() {
+		return increment{}, fmt.Errorf("%w: the file had to be repaired to be read, so it cannot be added to", ErrNotAppendable)
+	}
+	return increment{src: b, doc: d, prev: prev}, nil
+}
+
+// highest is the largest object number the file already uses, so that nothing
+// written now lands on top of something already there. The trailer's own count
+// is believed only when the objects agree with it: a file may say anything, and
+// one that says too little would have this overwrite what it names. refs are
+// the objects the caller knows about and is about to write beside.
+func (u *increment) highest(refs ...reader.Ref) int {
+	high := 0
+	if size, ok := reader.ToInt(u.doc.Trailer().Get("Size")); ok && size > 0 {
+		high = int(size) - 1
+	}
+	for _, ref := range refs {
+		if ref.Num > high {
+			high = ref.Num
+		}
+	}
+	return high
+}
+
 // append writes the original file, then the objects that changed, then a
 // cross-reference section naming where each of them went and pointing back at
-// the one before it.
-func (f *Filling) append(written map[int]reader.Object) ([]byte, error) {
-	out := append([]byte(nil), f.src...)
+// the one before it. raw holds objects whose bytes the caller has written
+// itself — a signature dictionary, whose placeholders it has to find again —
+// and offsets says where each object begins.
+func (u *increment) append(written map[int]reader.Object, raw map[int][]byte) (out []byte, offsets map[int]int) {
+	out = append([]byte(nil), u.src...)
 	// A file whose last byte is not a line ending would run its last line into
 	// the first object of the update.
 	if len(out) > 0 && out[len(out)-1] != '\n' && out[len(out)-1] != '\r' {
 		out = append(out, '\n')
 	}
 
-	nums := make([]int, 0, len(written))
+	nums := make([]int, 0, len(written)+len(raw))
 	for num := range written {
+		nums = append(nums, num)
+	}
+	for num := range raw {
 		nums = append(nums, num)
 	}
 	sort.Ints(nums)
 
-	offsets := make(map[int]int, len(nums))
+	offsets = make(map[int]int, len(nums))
 	for _, num := range nums {
 		offsets[num] = len(out)
-		out = append(out, []byte(strconv.Itoa(num)+" 0 obj\n")...)
-		out = reader.AppendObject(out, written[num])
+		out = append(out, []byte(objHeader(num))...)
+		if body, ok := raw[num]; ok {
+			out = append(out, body...)
+		} else {
+			out = reader.AppendObject(out, written[num])
+		}
 		out = append(out, []byte("\nendobj\n")...)
 	}
 
@@ -350,8 +401,8 @@ func (f *Filling) append(written map[int]reader.Object) ([]byte, error) {
 	// refuse the whole file. That is not a nicety — macOS's own renderer
 	// draws nothing at all for such a file.
 	start := len(out)
-	if xrefIsStream(f.src, f.prev) {
-		return f.appendStreamTable(out, nums, offsets, start)
+	if xrefIsStream(u.src, u.prev) {
+		return u.appendStreamTable(out, nums, offsets, start), offsets
 	}
 	out = append(out, []byte("xref\n")...)
 	for _, run := range runsOf(nums) {
@@ -361,21 +412,24 @@ func (f *Filling) append(written map[int]reader.Object) ([]byte, error) {
 		}
 	}
 	out = append(out, []byte("trailer\n")...)
-	out = reader.AppendObject(out, f.updateTrailer())
+	out = reader.AppendObject(out, u.updateTrailer())
 	out = append(out, []byte(fmt.Sprintf("\nstartxref\n%d\n%%%%EOF\n", start))...)
-	return out, nil
+	return out, offsets
 }
+
+// objHeader is what begins an object of the update.
+func objHeader(num int) string { return strconv.Itoa(num) + " 0 obj\n" }
 
 // updateTrailer is what the update says about the file as a whole: how many
 // objects there now are, where the section before it begins, and the entries
 // that identify the document, which every section has to repeat.
-func (f *Filling) updateTrailer() reader.Dict {
+func (u *increment) updateTrailer() reader.Dict {
 	trailer := reader.Dict{
-		"Size": reader.Integer(f.next),
-		"Prev": reader.Integer(f.prev),
+		"Size": reader.Integer(u.next),
+		"Prev": reader.Integer(u.prev),
 	}
 	for _, key := range []reader.Name{"Root", "Info", "ID"} {
-		if v, named := f.doc.Trailer()[key]; named {
+		if v, named := u.doc.Trailer()[key]; named {
 			trailer[key] = v
 		}
 	}
@@ -407,11 +461,11 @@ const (
 
 // appendStreamTable writes the update's own cross-reference as a stream, which
 // is what a file whose table is already one requires.
-func (f *Filling) appendStreamTable(out []byte, nums []int, offsets map[int]int, start int) ([]byte, error) {
+func (u *increment) appendStreamTable(out []byte, nums []int, offsets map[int]int, start int) []byte {
 	// The stream is itself an object, so it needs a number and an offset of
 	// its own, and it has to be in its own table.
-	self := f.next
-	f.next++
+	self := u.next
+	u.next++
 	offsets[self] = start
 	nums = append(nums, self)
 	sort.Ints(nums)
@@ -428,19 +482,19 @@ func (f *Filling) appendStreamTable(out []byte, nums []int, offsets map[int]int,
 			body = append(body, 0, 0)
 		}
 	}
-	dict := f.updateTrailer()
+	dict := u.updateTrailer()
 	dict["Type"] = reader.Name("XRef")
-	dict["Size"] = reader.Integer(f.next)
+	dict["Size"] = reader.Integer(u.next)
 	dict["Index"] = index
 	dict["W"] = reader.Array{reader.Integer(xrefTypeWidth),
 		reader.Integer(xrefOffsetWidth), reader.Integer(xrefGenWidth)}
 	dict["Length"] = reader.Integer(len(body))
 
-	out = append(out, []byte(strconv.Itoa(self)+" 0 obj\n")...)
+	out = append(out, []byte(objHeader(self))...)
 	out = reader.AppendObject(out, &reader.Stream{Dict: dict, Raw: body})
 	out = append(out, []byte("\nendobj\n")...)
 	out = append(out, []byte(fmt.Sprintf("startxref\n%d\n%%%%EOF\n", start))...)
-	return out, nil
+	return out
 }
 
 // runsOf breaks a sorted list of object numbers into the consecutive runs a
@@ -474,9 +528,7 @@ func lastStartxref(b []byte) (int, bool) {
 	for k < len(rest) && rest[k] >= '0' && rest[k] <= '9' {
 		k++
 	}
-	if k == j {
-		return 0, false
-	}
+	// No digits is an empty string, which Atoi refuses.
 	v, err := strconv.Atoi(string(rest[j:k]))
 	if err != nil || v <= 0 || v >= len(b) {
 		return 0, false

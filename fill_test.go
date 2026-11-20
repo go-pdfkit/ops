@@ -331,9 +331,8 @@ func TestTellingOneSortOfTableFromTheOther(t *testing.T) {
 	if !xrefIsStream([]byte("12 0 obj <</Type/XRef>>"), 0) {
 		t.Error("a stream was taken for a plain table")
 	}
-	if xrefIsStream([]byte("xref"), 99) {
-		t.Error("an offset past the end of the file said something")
-	}
+	// Offsets outside the file are asserted in TestStartxrefAndSectionGuards,
+	// which survives the guard being removed.
 }
 
 func TestAFileTheReaderHadToRepairIsNotAddedTo(t *testing.T) {

@@ -58,15 +58,27 @@ jobs:
       # ⛔ --need pdftoppm, because apt saying yes is not the binary being
       # there. The two render tests `t.Fatal` when CI is set and pdftoppm is
       # missing, so a package renamed upstream would otherwise reach them.
-      - name: Install poppler, the foreign judge the render tests print by
+      #
+      # ⛔ pdfsig (poppler-utils), qpdf and openssl judge every signature Sign
+      # writes; REQUIRE_* / PDFSIG_REQUIRE below turn a missing one into a
+      # failure instead of a skip, on this lane only, because this is the lane
+      # that installs them.
+      - name: Install poppler and qpdf, the foreign judges the render and signature tests print by
         run: |
           GOBIN=/usr/local/bin go install github.com/go-fleettools/fleettools/cmd/aptneed@latest
-          sudo aptneed --need pdftoppm poppler-utils
+          sudo aptneed --need pdftoppm --need pdfsig --need qpdf --need openssl poppler-utils qpdf openssl
+          pdfsig -v
+          qpdf --version
+          openssl version
 
       - name: go vet
         run: go vet ./...
 
       - name: Test with coverage
+        env:
+          PDFSIG_REQUIRE: "1"
+          REQUIRE_QPDF: "1"
+          REQUIRE_OPENSSL: "1"
         run: go test -covermode=set -coverprofile=coverage.out ./...
 
       - name: Assert exact 100% statement coverage
