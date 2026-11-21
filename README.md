@@ -997,6 +997,61 @@ pdfops sign -key key.pem -cert cert.pem -reason "I agree" contract.pdf signed.pd
 pdfops sign -key key.pem -cert cert.pem -chain ca.pem -field approval -subfilter cades form.pdf signed.pdf
 ```
 
+### A visible signature
+
+`SignOptions.Appearance` gives the signature a box on its page. `nil` (the
+default) keeps it invisible, and the bytes written are then exactly what they
+were before `Appearance` existed (a golden SHA-256 test pins that).
+
+```go
+signed, err := ops.Sign(pdf, ops.SignOptions{
+	Signer: key, Certificate: cert, Page: 1,
+	Appearance: &ops.SignAppearance{
+		Rect:  [4]float64{50, 50, 250, 110}, // x0 y0 x1 y1, in the page's points
+		Image: logoPNG,                       // optional; its aspect ratio is kept, fitted and centred
+		Text:  "Approved\nM. Martin",         // optional; Helvetica, wrapped; \n starts a line
+		// FontSize 0 = the largest up to 24 pt that fits; Color is RGB 0..1, zero = black.
+	},
+})
+```
+
+With neither `Image` nor `Text` the box says "Digitally signed by <common
+name>" and the signing time (RFC 3339, UTC). For an existing empty signature
+field, a zero `Rect` means the field widget's own `/Rect`. The widget gets
+`/F 4` (Print), the `/Rect` and an `/AP /N` form holding the picture and the
+text. All of those objects are written **in the same incremental update as the
+signature**, so they are inside the `/ByteRange`: an appearance edited after
+signing breaks the signature (tested).
+
+Only the field's **first** widget gets the appearance. The text is Helvetica in
+WinAnsiEncoding, so a character that encoding has no code for (Cyrillic, CJK,
+an emoji) is **refused, not dropped**: `ErrAppearanceText` names the first one
+and asks for a `Text` that can be drawn. That includes the default text when
+the certificate's common name has such a character (a Cyrillic signer must pass
+a `Text`, or an `Image`). Drawing them needs a Unicode (Type0) font, which is
+future work.
+
+Refused, each with a sentinel: a box that is not finite, is inverted, has no
+area or has a coordinate beyond 14400 points, the page limit of ISO 32000-1
+Annex C (`ErrAppearanceRect`), a box lying outside the page by more than its own
+size, the page being its `/CropBox` when it has one and its `/MediaBox`
+otherwise (`ErrAppearanceOffPage`), an image that does not decode or is over
+`MaxPixels` (`ErrAppearanceImage`), text over 4 KiB or that cannot be drawn
+(`ErrAppearanceText`), a font size that is neither 0 nor from 1 to 1000, or a
+colour that is not finite (`ErrAppearanceFontSize`, `ErrAppearanceColor`), and
+an existing field with no widget, or none with a usable rectangle when none was
+given (`ErrNoFieldRect`).
+
+```
+pdfops sign -key key.pem -cert cert.pem -visible 50,50,250,110 -text "Approved" contract.pdf signed.pdf
+pdfops sign -key key.pem -cert cert.pem -visible 50,50,250,110 -image logo.png contract.pdf signed.pdf
+```
+
+`-visible` is four numbers on `-page`; `-image` is read up to 16 MiB; with
+`-field` naming an existing signature field, `-visible` may be left out. The
+drawn page is checked in the tests by rendering it, and the bytes by `pdfsig`,
+`qpdf --check` and `reader/signature`.
+
 Judged by three independent tools on every key kind, for a plain
 cross-reference table and a cross-reference stream, with and without a
 prepared field, signed once and then again:

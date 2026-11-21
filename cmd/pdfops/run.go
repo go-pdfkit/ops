@@ -62,7 +62,7 @@ var commands = []command{
 	{"bates", "-prefix <text> -start <n> <in.pdf> <out.pdf>", "stamp a running serial, exhibit style", runBates},
 	{"stamp", "-text <words> -at <place> <in.pdf> <out.pdf>", "draw a line of text where you say", runStamp},
 	{"place", "-image <file> [-at <place> | -x <pt> -y <pt>] <in.pdf> <out.pdf>", "draw a picture where you say: a signature, a logo", runPlace},
-	{"sign", "-key <key.pem> -cert <cert.pem> [-chain <file>] [-field <name>] [-reason <text>] <in.pdf> <out.pdf>", "sign the document, as an update that leaves every earlier byte as it was", runSign},
+	{"sign", "-key <key.pem> -cert <cert.pem> [-chain <file>] [-field <name>] [-reason <text>] [-visible x0,y0,x1,y1 [-image <file>] [-text <text>]] <in.pdf> <out.pdf>", "sign the document, as an update that leaves every earlier byte as it was", runSign},
 	{"info", "<in.pdf>", "print what the file says about itself", runInfo},
 	{"metadata", "(-set <Key=value> … | -clear) <in.pdf> <out.pdf>", "write what the file says about itself", runMetadata},
 	{"version", "-set <version> <in.pdf> <out.pdf>", "set the PDF version the file declares", runVersion},

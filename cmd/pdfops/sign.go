@@ -15,7 +15,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/go-pdfkit/ops"
 )
@@ -26,7 +29,33 @@ import (
 const (
 	maxCredentialFile = 1 << 20
 	maxSignInput      = 1 << 30
+	// maxSignImage is the most of a picture this will read for a visible
+	// signature; a signature's picture is a logo or a scanned hand.
+	maxSignImage = 16 << 20
+	// maxVisibleArg bounds the -visible value before it is parsed.
+	maxVisibleArg = 256
 )
+
+// parseVisible reads the -visible value: four finite numbers, x0,y0,x1,y1.
+// Whether they make a box that is on the page is ops.Sign's to say.
+func parseVisible(s string) ([4]float64, error) {
+	var r [4]float64
+	if len(s) > maxVisibleArg {
+		return r, fmt.Errorf("-visible is %d bytes long; it is four numbers", len(s))
+	}
+	parts := strings.Split(s, ",")
+	if len(parts) != 4 {
+		return r, fmt.Errorf("-visible %q should be x0,y0,x1,y1: four numbers", s)
+	}
+	for i, p := range parts[:min(len(parts), len(r))] {
+		v, err := strconv.ParseFloat(strings.TrimSpace(p), 64)
+		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+			return [4]float64{}, fmt.Errorf("-visible %q: %q is not a finite number", s, p)
+		}
+		r[i] = v
+	}
+	return r, nil
+}
 
 // readBounded reads a file, refusing one longer than max rather than reading it
 // whole first.
@@ -121,6 +150,9 @@ func runSign(c *context, args []string) error {
 	hash := fs.String("hash", "", "sha256, sha384 or sha512; sha256 when empty")
 	pss := fs.Bool("pss", false, "RSASSA-PSS for an RSA key")
 	reserve := fs.Int("reserve", 0, "bytes of space for the CMS signature; 0 measures it")
+	visible := fs.String("visible", "", "make the signature visible in the box x0,y0,x1,y1 (points, on -page)")
+	imageFile := fs.String("image", "", "a picture to show in the visible signature")
+	text := fs.String("text", "", "the visible signature's text; by default the signer's name and the date")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -147,6 +179,20 @@ func runSign(c *context, args []string) error {
 		return fmt.Errorf("%q is not a -hash; try sha256, sha384 or sha512", *hash)
 	}
 	o.Hash = h
+	var err error
+	if *visible != "" || *imageFile != "" || *text != "" {
+		o.Appearance = &ops.SignAppearance{Text: *text}
+		if *visible != "" {
+			if o.Appearance.Rect, err = parseVisible(*visible); err != nil {
+				return err
+			}
+		}
+		if *imageFile != "" {
+			if o.Appearance.Image, err = readBounded(*imageFile, maxSignImage); err != nil {
+				return err
+			}
+		}
+	}
 
 	keyPEM, err := readBounded(*keyFile, maxCredentialFile)
 	if err != nil {
@@ -182,6 +228,9 @@ func runSign(c *context, args []string) error {
 		return err
 	}
 	signed, err := ops.Sign(src, o)
+	if errors.Is(err, ops.ErrAppearanceRect) && *visible == "" {
+		return fmt.Errorf("%w (-image and -text need -visible x0,y0,x1,y1, unless -field names an existing signature field)", err)
+	}
 	if err != nil {
 		return err
 	}
