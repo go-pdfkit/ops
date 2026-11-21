@@ -2,7 +2,9 @@ package ops
 
 import (
 	"bytes"
+	"crypto"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -437,6 +439,17 @@ func TestXrefHighestRefusesToBelieveWhatIsGarbage(t *testing.T) {
 	}
 }
 
+// countingSigner counts how often the key is asked to sign.
+type countingSigner struct {
+	crypto.Signer
+	calls int
+}
+
+func (c *countingSigner) Sign(r io.Reader, digest []byte, o crypto.SignerOpts) ([]byte, error) {
+	c.calls++
+	return c.Signer.Sign(r, digest, o)
+}
+
 // withSize is smallSize with its trailer saying it holds n objects.
 func withSize(t *testing.T, n int) []byte {
 	t.Helper()
@@ -475,6 +488,20 @@ func TestASignatureIsNotNumberedPastTheMostAPDFMayHold(t *testing.T) {
 		if _, err := signOrFail(t, withSize(t, size), opts(t, "ecdsa")); !errors.Is(err, ErrTooManyObjects) {
 			t.Errorf("%s (/Size %d): %v, want ErrTooManyObjects", name, size, err)
 		}
+	}
+
+	// A file already full is refused before the key is asked for anything:
+	// measuring the reserve signs once, and that must not happen for a file
+	// that will be refused. (On a 32-bit build it is also what keeps counting
+	// on from the highest number from wrapping past the later check.)
+	o := opts(t, "ecdsa")
+	counted := &countingSigner{Signer: o.Signer}
+	o.Signer = counted
+	if _, err := signOrFail(t, withSize(t, maxIndirectObjects+1), o); !errors.Is(err, ErrTooManyObjects) {
+		t.Errorf("already full: %v, want ErrTooManyObjects", err)
+	}
+	if counted.calls != 0 {
+		t.Errorf("the key signed %d time(s) for a file that was refused", counted.calls)
 	}
 
 	// The re-review's own file: a free entry listed at the top of what a
