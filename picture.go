@@ -128,6 +128,14 @@ func (d *Doc) pictureContent(w *reader.Writer, p Page, area [4]float64) ([]byte,
 
 // writePicture puts an image into the file and returns what refers to it.
 func writePicture(w *reader.Writer, pic *picture) reader.Object {
+	return pictureObjects(pic, func(s *reader.Stream) reader.Ref { return w.Add(s) })
+}
+
+// pictureObjects builds an image XObject, and its soft mask when it needs one,
+// handing each stream to add and returning what refers to the image. It is the
+// ONE place an image's dictionary is decided: the full-rewrite Writer and an
+// incremental update (a visible signature) both add through it.
+func pictureObjects(pic *picture, add func(*reader.Stream) reader.Ref) reader.Object {
 	dict := reader.Dict{
 		"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
 		"Width": reader.Integer(pic.width), "Height": reader.Integer(pic.height),
@@ -139,11 +147,11 @@ func writePicture(w *reader.Writer, pic *picture) reader.Object {
 			dict["ColorSpace"] = reader.Name("DeviceGray")
 		}
 		dict["Filter"] = pic.filter
-		return w.Add(&reader.Stream{Dict: dict, Raw: pic.stored})
+		return add(&reader.Stream{Dict: dict, Raw: pic.stored})
 	}
 	rgb, alpha := split(pic.pix)
 	if alpha != nil {
-		dict["SMask"] = w.Add(&reader.Stream{Dict: reader.Dict{
+		dict["SMask"] = add(&reader.Stream{Dict: reader.Dict{
 			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
 			"Width": reader.Integer(pic.width), "Height": reader.Integer(pic.height),
 			"BitsPerComponent": reader.Integer(8),
@@ -152,7 +160,7 @@ func writePicture(w *reader.Writer, pic *picture) reader.Object {
 		}, Raw: deflate(alpha)})
 	}
 	dict["Filter"] = reader.Name("FlateDecode")
-	return w.Add(&reader.Stream{Dict: dict, Raw: deflate(rgb)})
+	return add(&reader.Stream{Dict: dict, Raw: deflate(rgb)})
 }
 
 // A placedPicture is an image drawn at a place on a page rather than over the

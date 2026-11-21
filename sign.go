@@ -74,6 +74,10 @@ type SignOptions struct {
 	Field string
 	Page  int
 
+	// Appearance makes the signature visible: a box on the page with an image
+	// and/or text. nil keeps today's invisible signature, byte for byte.
+	Appearance *SignAppearance
+
 	// SubFilter is PKCS7Detached (the default) or CAdESDetached.
 	SubFilter string
 
@@ -199,6 +203,12 @@ func Sign(src []byte, o SignOptions) ([]byte, error) {
 			return nil, fmt.Errorf("ops: the document has no page %d to put the signature on", page)
 		}
 	}
+	var vis *visible
+	if o.Appearance != nil {
+		if vis, err = checkAppearance(d, o, field); err != nil {
+			return nil, err
+		}
+	}
 	s.next = s.highest() + 1
 	if err := s.room(); err != nil {
 		return nil, err
@@ -222,12 +232,23 @@ func Sign(src []byte, o SignOptions) ([]byte, error) {
 	}
 	acro["SigFlags"] = reader.Integer(3)
 
+	// widget is the annotation the appearance is written into, when there is one.
+	var widget reader.Dict
 	if field != nil {
 		dict := dictOf(s.written, fieldRef, field.Dict())
 		dict["V"] = sigRef
+		if vis != nil {
+			// ⛔ The widget's own reference, which is the field's when the two
+			// are merged and another object when they are not.
+			wRef, ok := vis.widget.Ref()
+			if !ok {
+				return nil, fmt.Errorf("ops: the widget of %q is written inside another object and cannot be changed on its own", name)
+			}
+			widget = dictOf(s.written, wRef, vis.widget.Dict())
+		}
 	} else {
 		widgetRef := s.alloc()
-		s.written[widgetRef.Num] = reader.Dict{
+		widget = reader.Dict{
 			"FT": reader.Name("Sig"), "T": textString(name), "V": sigRef,
 			"Type": reader.Name("Annot"), "Subtype": reader.Name("Widget"),
 			// An invisible signature: a widget of no size, with the Print (4)
@@ -236,6 +257,7 @@ func Sign(src []byte, o SignOptions) ([]byte, error) {
 			"F":    reader.Integer(132),
 			"P":    pageRef,
 		}
+		s.written[widgetRef.Num] = widget
 		// The reader has just found this page by its reference, so it reads.
 		pageObj, _ := d.Get(pageRef)
 		pageDict, _ := pageObj.(reader.Dict)
@@ -267,6 +289,11 @@ func Sign(src []byte, o SignOptions) ([]byte, error) {
 	when := o.Time
 	if when.IsZero() {
 		when = now()
+	}
+	if vis != nil {
+		// After every number the invisible signature takes, so that one without
+		// an Appearance is numbered as it always was.
+		s.draw(widget, vis, o, when)
 	}
 	dict, brAt, contentsAt := signatureDict(sub, reserve, o, when)
 
