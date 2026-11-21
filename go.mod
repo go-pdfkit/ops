@@ -3,6 +3,7 @@ module github.com/go-pdfkit/ops
 go 1.27.4
 
 require (
+	github.com/go-authn/cms v0.2.0
 	github.com/go-gfx/gfx v0.41.0
 	github.com/go-images/images v0.3.0
 	github.com/go-images/jpeg v0.3.0
@@ -12,7 +13,7 @@ require (
 	github.com/go-pdfkit/extract v0.11.0
 	github.com/go-pdfkit/forms v0.6.0
 	github.com/go-pdfkit/pdffont v0.4.0
-	github.com/go-pdfkit/reader v0.19.1
+	github.com/go-pdfkit/reader v0.20.0
 	github.com/go-pdfkit/render v0.69.1
 	github.com/go-pdfkit/xfa v0.22.0
 	github.com/go-richdoc/markdown v0.13.0

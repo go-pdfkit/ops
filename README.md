@@ -954,6 +954,65 @@ Two details the format makes easy to get wrong, both held by tests:
 - **A widget is marked Print.** Without it the field is on screen and gone from
   the paper, which is where a filled form is most often looked at.
 
+## Signing a document
+
+`ops.Sign` adds a digital signature (ISO 32000-1 §12.8) as an **incremental
+update**, written by the same appender `fill` uses: the original bytes are the
+start of the result, so every earlier signature still verifies.
+
+```go
+signed, err := ops.Sign(pdf, ops.SignOptions{
+	Signer: key, Certificate: cert, Chain: intermediates, // RSA, ECDSA or Ed25519
+	Field:  "approval",          // an existing empty signature field, or a new invisible one
+	Reason: "I agree", Location: "Paris",
+	SubFilter: ops.PKCS7Detached, // or ops.CAdESDetached
+})
+```
+
+What is written: an uncompressed signature dictionary whose values are all
+direct (Table 252), a `/ByteRange` of fixed-width numbers filled in after
+layout, a `/Contents` placeholder sized by signing once beforehand (or by
+`Reserve`), the signature field and its widget on the page, and `/SigFlags 3`
+in the form dictionary. The CMS is a detached SignedData from
+[go-authn/cms](https://github.com/go-authn/cms), with the
+signing-certificate-v2 attribute and no signing-time attribute; the time is
+`/M`. `CAdESDetached` writes the `ETSI.CAdES.detached` sub-filter. This
+repository does not claim conformance to a PAdES baseline profile, because
+that standard has not been checked here.
+
+Refused, each with a sentinel: an encrypted document (`ErrEncrypted`: 32000-1
+does not exempt `/Contents` from encryption, so nothing is guessed), a
+signature larger than its reserve (`ErrReserveTooSmall`), a field that already
+holds a signature (`ErrFieldSigned`), and a field name that belongs to some
+other kind of field (`ErrNotSignatureField`), a nil signer or certificate
+(`ErrNoSigner`), input that is not a readable PDF (`ErrNotReadable`) and a file
+that cannot be appended to (`ErrNotAppendable`: no usable `startxref`, or one
+that had to be repaired to be read).
+
+From the command line, with PEM files (PKCS #8, PKCS #1 or SEC 1 key; an
+encrypted key is refused; key and certificate files over 1 MiB are refused):
+
+```
+pdfops sign -key key.pem -cert cert.pem -reason "I agree" contract.pdf signed.pdf
+pdfops sign -key key.pem -cert cert.pem -chain ca.pem -field approval -subfilter cades form.pdf signed.pdf
+```
+
+Judged by three independent tools on every key kind, for a plain
+cross-reference table and a cross-reference stream, with and without a
+prepared field, signed once and then again:
+
+| key     | poppler `pdfsig` 26.10 | reader/signature | `openssl cms -verify` | `qpdf --check` |
+|---------|------------------------|------------------|-----------------------|----------------|
+| RSA     | both valid, last "Total document signed" | valid, whole, dictionary signed | valid | no new warning |
+| ECDSA   | both valid, last "Total document signed" | valid, whole, dictionary signed | valid | no new warning |
+| Ed25519 | **"Signature is Invalid"** (NSS)         | valid, whole, dictionary signed | valid | no new warning |
+
+The Ed25519 row is poppler's verdict, and it is recorded rather than
+asserted. Both of the other judges accept the same bytes. A property test
+flips bytes across both signed ranges, and none of the flips leaves a valid
+whole-file signature. CI installs the three tools and fails, rather than
+skips, when one is missing.
+
 ## Marking text: `pdfops mark`
 
 `pdfops mark` writes the marks a reader makes **over** a page rather than on it

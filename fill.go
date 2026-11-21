@@ -2,6 +2,7 @@ package ops
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -30,15 +31,8 @@ import (
 // A Filling is a document's form, opened so that it can be filled in and
 // written back.
 type Filling struct {
-	src  []byte
-	doc  *reader.Document
+	increment
 	form *forms.Form
-	// next is the object number to hand out for anything new.
-	next int
-	// prev is where the file's own cross-reference section begins, which the
-	// update has to point back at. A file that does not say is one the reader
-	// had to repair, and those are refused before this is ever set.
-	prev int
 	// formRef is where the AcroForm dictionary lives, when it lives somewhere
 	// of its own rather than written into the catalogue.
 	formRef reader.Ref
@@ -73,31 +67,15 @@ func openFormIn(b []byte, d *reader.Document) (*Filling, bool, error) {
 	if !ok {
 		return nil, false, nil
 	}
-	// A document written through a key has every string and every stream in
-	// it written through that key too, so anything appended would have to be
-	// as well. That is not done here, and writing an update in the clear
-	// beside encrypted objects makes a file nothing can read.
-	if d.Encrypted() {
-		return nil, false, fmt.Errorf("ops: the document is encrypted, and this does not yet write into one")
+	inc, err := openIncrement(b, d)
+	if err != nil {
+		return nil, false, err
 	}
-	// Where the file says its own cross-reference section begins is what the
-	// update points back at. This is asked before anything else about the
-	// shape of the file, because a file that does not say cannot be added to
-	// at all, whatever else is wrong with it.
-	prev, ok := lastStartxref(b)
-	if !ok {
-		return nil, false, fmt.Errorf("ops: the file does not say where its cross-reference table is, so nothing can be appended to it")
+	f := &Filling{increment: inc, form: form}
+	f.next = f.highest() + 1
+	if err := f.room(); err != nil {
+		return nil, false, err
 	}
-	// A file this package has had to repair has no cross-reference section
-	// worth pointing back at, however confidently it says where one is: an
-	// update appended to it would name offsets into a table that was never
-	// right. Such a file is filled in by writing it out whole, which is not
-	// what this does.
-	if d.Repaired() {
-		return nil, false, fmt.Errorf("ops: the file had to be repaired to be read, so it cannot be added to")
-	}
-	f := &Filling{src: b, doc: d, form: form, prev: prev}
-	f.next = f.highestObject() + 1
 	if catalog, err := d.Catalog(); err == nil {
 		if ref, ok := catalog.Get("AcroForm").(reader.Ref); ok {
 			f.formRef = ref
@@ -112,31 +90,6 @@ func (f *Filling) Form() *forms.Form { return f.form }
 // Fill sets one field by name, which is what a command line or a map of
 // answers wants.
 func (f *Filling) Fill(name, value string) error { return f.form.Fill(name, value) }
-
-// highestObject is the largest object number the file already uses, so that
-// nothing written now lands on top of something already there. The trailer's
-// own count is believed only when the objects agree with it: a file may say
-// anything, and one that says too little would have this package overwrite
-// what it names.
-func (f *Filling) highestObject() int {
-	high := 0
-	if size, ok := reader.ToInt(f.doc.Trailer().Get("Size")); ok && size > 0 {
-		high = int(size) - 1
-	}
-	// Every object the form knows about is checked against that, since those
-	// are the ones whose numbers this is about to write beside.
-	for _, fld := range f.form.Fields() {
-		if ref, ok := fld.Ref(); ok && ref.Num > high {
-			high = ref.Num
-		}
-		for _, w := range fld.Widgets {
-			if ref, ok := w.Ref(); ok && ref.Num > high {
-				high = ref.Num
-			}
-		}
-	}
-	return high
-}
 
 // Bytes writes the original file with the changes appended to it.
 func (f *Filling) Bytes() ([]byte, error) {
@@ -160,7 +113,11 @@ func (f *Filling) Bytes() ([]byte, error) {
 		delete(dict, "NeedAppearances")
 		written[f.formRef.Num] = dict
 	}
-	return f.append(written)
+	if err := f.room(); err != nil {
+		return nil, err
+	}
+	out, _ := f.append(written, nil)
+	return out, nil
 }
 
 // update works out what has to be written for one field that was filled in.
@@ -318,28 +275,260 @@ func textString(s string) reader.String {
 	return reader.String(out)
 }
 
+// ErrEncrypted is what adding to an encrypted document is refused with. A
+// document written through a key has every string and every stream in it
+// written through that key too, so anything appended would have to be as well.
+// That is not done here, and writing an update in the clear beside encrypted
+// objects makes a file nothing can read.
+var ErrEncrypted = errors.New("ops: the document is encrypted, and this does not yet write into one")
+
+// ErrNotAppendable is what a file that cannot be added to is refused with: one
+// that does not say where its cross-reference section is, or that had to be
+// repaired to be read.
+var ErrNotAppendable = errors.New("ops: the file cannot be appended to")
+
+// An increment is an incremental update being made to a file (ISO 32000-1
+// §7.5.6): the file itself, untouched, and what will be appended to it. It is
+// shared by everything in this package that writes into a document rather than
+// rebuilding one — filling a form and signing it.
+type increment struct {
+	src []byte
+	doc *reader.Document
+	// next is the object number to hand out for anything new.
+	next int
+	// prev is where the file's own cross-reference section begins, which the
+	// update has to point back at. A file that does not say is one the reader
+	// had to repair, and those are refused before this is ever set.
+	prev int
+}
+
+// openIncrement says whether a file can be added to at all, and prepares the
+// update if it can.
+func openIncrement(b []byte, d *reader.Document) (increment, error) {
+	if d.Encrypted() {
+		return increment{}, ErrEncrypted
+	}
+	// Where the file says its own cross-reference section begins is what the
+	// update points back at. This is asked before anything else about the
+	// shape of the file, because a file that does not say cannot be added to
+	// at all, whatever else is wrong with it.
+	prev, ok := lastStartxref(b)
+	if !ok {
+		return increment{}, fmt.Errorf("%w: the file does not say where its cross-reference table is, so nothing can be appended to it", ErrNotAppendable)
+	}
+	// A file this package has had to repair has no cross-reference section
+	// worth pointing back at, however confidently it says where one is: an
+	// update appended to it would name offsets into a table that was never
+	// right. Such a file is written out whole, which is not what this does.
+	if d.Repaired() {
+		return increment{}, fmt.Errorf("%w: the file had to be repaired to be read, so it cannot be added to", ErrNotAppendable)
+	}
+	return increment{src: b, doc: d, prev: prev}, nil
+}
+
+// highest is the largest object number the file already uses, so that nothing
+// written now lands on top of something already there. The trailer's own count
+// is believed only when the objects agree with it: a file may say anything, and
+// one that says too little would have this overwrite what it names. refs are
+// the objects the caller knows about and is about to write beside.
+func (u *increment) highest() int {
+	// The sections themselves are read for the numbers they list, whatever any
+	// /Size says: a file whose /Size is too small still lists its objects, and
+	// those are what a new object must not land on. Chosen over refusing such a
+	// file because the update's own /Size can simply say the truth. Every
+	// object a caller could be about to write beside is listed in a section, so
+	// there is nothing further to check them against.
+	high := xrefHighest(u.src, u.prev)
+	if size, ok := reader.ToInt(u.doc.Trailer().Get("Size")); ok && size > 0 && int(size)-1 > high && size <= maxObjectNumber {
+		high = int(size) - 1
+	}
+	return high
+}
+
+// maxObjectNumber bounds every number read from a file's own sections, so that
+// adding one to it cannot overflow an int on a 32-bit build.
+const maxObjectNumber = 1<<31 - 2
+
+// maxIndirectObjects is the most indirect objects ISO 32000-1 Annex C lets a
+// file hold. An update numbers its objects on from the file's highest, and a
+// file that already lists a number near the top of an int would have it write
+// numbers that no reader accepts: qpdf calls such a file damaged, and pdfsig
+// finds no signature in it at all.
+const maxIndirectObjects = 8_388_607
+
+// ErrTooManyObjects is returned when an update would number an object past
+// the most a PDF may hold.
+var ErrTooManyObjects = errors.New("ops: the update would number an object past the most a PDF may hold")
+
+// room refuses an update whose next object number is past maxIndirectObjects.
+// It is asked twice: once the numbering starts, so that counting on from there
+// cannot overflow an int even on a 32-bit build, and again before writing,
+// once every object has its number. A table written as a stream takes u.next
+// itself, which is why next, and not next-1, is what must fit.
+func (u *increment) room() error {
+	if u.next > maxIndirectObjects {
+		return fmt.Errorf("%w: the next would be %d, and at most %d may be", ErrTooManyObjects, u.next, maxIndirectObjects)
+	}
+	return nil
+}
+
+// maxSections bounds how many sections /Prev is followed through.
+const maxSections = 4096
+
+// xrefHighest is the largest object number any section of the chain beginning
+// at `at` lists, free entries included, following /Prev and /XRefStm. A section
+// it cannot read ends the walk with what it has found: the reader has already
+// accepted the file, so this only ever adds to what it knows.
+func xrefHighest(b []byte, at int) int {
+	high := 0
+	seen := map[int]bool{}
+	// `at` is inside the file: the first came from lastStartxref, which refuses
+	// one that is not, and each /Prev is checked below before it is followed.
+	for hops := 0; at > 0 && !seen[at] && hops < maxSections; hops++ {
+		seen[at] = true
+		var d reader.Dict
+		var h int
+		if xrefIsStream(b, at) {
+			d, h = streamSection(b, at)
+		} else {
+			d, h = tableSection(b, at)
+		}
+		if h > high {
+			high = h
+		}
+		if hybrid, ok := reader.ToInt(d.Get("XRefStm")); ok && hybrid > 0 && hybrid < int64(len(b)) && !seen[int(hybrid)] {
+			seen[int(hybrid)] = true
+			if _, hh := streamSection(b, int(hybrid)); hh > high {
+				high = hh
+			}
+		}
+		prev, ok := reader.ToInt(d.Get("Prev"))
+		if !ok || prev <= 0 || prev >= int64(len(b)) {
+			break
+		}
+		at = int(prev)
+	}
+	return high
+}
+
+// tableSection reads one classic section: its subsections "first count" and
+// the count entries after each, then the trailer dictionary.
+func tableSection(b []byte, at int) (reader.Dict, int) {
+	rest := b[at:]
+	// xrefIsStream has said this begins with the word "xref".
+	_, rest = nextToken(rest)
+	high := 0
+	// Every pass takes two words at least, so the loop ends with the bytes; a
+	// file that stops before its trailer gives no dictionary.
+	for len(rest) != 0 {
+		var tok string
+		tok, rest = nextToken(rest)
+		if tok == "trailer" {
+			break
+		}
+		first, err1 := strconv.Atoi(tok)
+		var cs string
+		cs, rest = nextToken(rest)
+		count, err2 := strconv.Atoi(cs)
+		if err1 != nil || err2 != nil || first < 0 || count < 0 || first > maxObjectNumber || count > maxObjectNumber {
+			return nil, high
+		}
+		// Each entry is three words; a count that promises more than the file
+		// holds stops where the file does.
+		for i := 0; i < count; i++ {
+			var last string
+			for w := 0; w < 3; w++ {
+				last, rest = nextToken(rest)
+			}
+			if last == "" {
+				return nil, high
+			}
+			if n := first + i; n > high && n <= maxObjectNumber {
+				high = n
+			}
+		}
+	}
+	// A trailer that does not parse is nil, which has no /Prev to follow.
+	obj, _, _ := reader.ParseObject(rest)
+	d, _ := obj.(reader.Dict)
+	return d, high
+}
+
+// unresolved is the resolver a section is read with: the sections are what
+// says where objects are, so none can be looked up while they are read.
+func unresolved(reader.Ref) (reader.Object, error) { return reader.Null{}, nil }
+
+// streamSection reads one cross-reference stream's /Index (or /Size) and the
+// dictionary that carries /Prev.
+func streamSection(b []byte, at int) (reader.Dict, int) {
+	_, obj, _, err := reader.ParseIndirectObject(b[at:], unresolved)
+	s, ok := obj.(*reader.Stream)
+	if err != nil || !ok {
+		return nil, 0
+	}
+	high := 0
+	if idx, ok := s.Dict.Get("Index").(reader.Array); ok {
+		for i := 0; i+1 < len(idx); i += 2 {
+			first, ok1 := reader.ToInt(idx[i])
+			count, ok2 := reader.ToInt(idx[i+1])
+			if ok1 && ok2 && first >= 0 && count > 0 && first <= maxObjectNumber && count <= maxObjectNumber {
+				// Compared as it was read, and converted once it is known to
+				// fit: converting first would truncate on a 32-bit build.
+				if n := first + count - 1; n > int64(high) && n <= maxObjectNumber {
+					high = int(n)
+				}
+			}
+		}
+	} else if size, ok := reader.ToInt(s.Dict.Get("Size")); ok && size > 0 && size <= maxObjectNumber {
+		high = int(size) - 1
+	}
+	return s.Dict, high
+}
+
+// nextToken is the next whitespace-separated word, and what follows it.
+func nextToken(b []byte) (string, []byte) {
+	i := 0
+	for i < len(b) && (b[i] == ' ' || b[i] == '\r' || b[i] == '\n' || b[i] == '\t' || b[i] == 0 || b[i] == '\f') {
+		i++
+	}
+	j := i
+	for j < len(b) && !(b[j] == ' ' || b[j] == '\r' || b[j] == '\n' || b[j] == '\t' || b[j] == 0 || b[j] == '\f') {
+		j++
+	}
+	return string(b[i:j]), b[j:]
+}
+
 // append writes the original file, then the objects that changed, then a
 // cross-reference section naming where each of them went and pointing back at
-// the one before it.
-func (f *Filling) append(written map[int]reader.Object) ([]byte, error) {
-	out := append([]byte(nil), f.src...)
+// the one before it. raw holds objects whose bytes the caller has written
+// itself — a signature dictionary, whose placeholders it has to find again —
+// and offsets says where each object begins.
+func (u *increment) append(written map[int]reader.Object, raw map[int][]byte) (out []byte, offsets map[int]int) {
+	out = append([]byte(nil), u.src...)
 	// A file whose last byte is not a line ending would run its last line into
 	// the first object of the update.
 	if len(out) > 0 && out[len(out)-1] != '\n' && out[len(out)-1] != '\r' {
 		out = append(out, '\n')
 	}
 
-	nums := make([]int, 0, len(written))
+	nums := make([]int, 0, len(written)+len(raw))
 	for num := range written {
+		nums = append(nums, num)
+	}
+	for num := range raw {
 		nums = append(nums, num)
 	}
 	sort.Ints(nums)
 
-	offsets := make(map[int]int, len(nums))
+	offsets = make(map[int]int, len(nums))
 	for _, num := range nums {
 		offsets[num] = len(out)
-		out = append(out, []byte(strconv.Itoa(num)+" 0 obj\n")...)
-		out = reader.AppendObject(out, written[num])
+		out = append(out, []byte(objHeader(num))...)
+		if body, ok := raw[num]; ok {
+			out = append(out, body...)
+		} else {
+			out = reader.AppendObject(out, written[num])
+		}
 		out = append(out, []byte("\nendobj\n")...)
 	}
 
@@ -350,8 +539,8 @@ func (f *Filling) append(written map[int]reader.Object) ([]byte, error) {
 	// refuse the whole file. That is not a nicety — macOS's own renderer
 	// draws nothing at all for such a file.
 	start := len(out)
-	if xrefIsStream(f.src, f.prev) {
-		return f.appendStreamTable(out, nums, offsets, start)
+	if xrefIsStream(u.src, u.prev) {
+		return u.appendStreamTable(out, nums, offsets, start), offsets
 	}
 	out = append(out, []byte("xref\n")...)
 	for _, run := range runsOf(nums) {
@@ -361,21 +550,24 @@ func (f *Filling) append(written map[int]reader.Object) ([]byte, error) {
 		}
 	}
 	out = append(out, []byte("trailer\n")...)
-	out = reader.AppendObject(out, f.updateTrailer())
+	out = reader.AppendObject(out, u.updateTrailer())
 	out = append(out, []byte(fmt.Sprintf("\nstartxref\n%d\n%%%%EOF\n", start))...)
-	return out, nil
+	return out, offsets
 }
+
+// objHeader is what begins an object of the update.
+func objHeader(num int) string { return strconv.Itoa(num) + " 0 obj\n" }
 
 // updateTrailer is what the update says about the file as a whole: how many
 // objects there now are, where the section before it begins, and the entries
 // that identify the document, which every section has to repeat.
-func (f *Filling) updateTrailer() reader.Dict {
+func (u *increment) updateTrailer() reader.Dict {
 	trailer := reader.Dict{
-		"Size": reader.Integer(f.next),
-		"Prev": reader.Integer(f.prev),
+		"Size": reader.Integer(u.next),
+		"Prev": reader.Integer(u.prev),
 	}
 	for _, key := range []reader.Name{"Root", "Info", "ID"} {
-		if v, named := f.doc.Trailer()[key]; named {
+		if v, named := u.doc.Trailer()[key]; named {
 			trailer[key] = v
 		}
 	}
@@ -407,11 +599,11 @@ const (
 
 // appendStreamTable writes the update's own cross-reference as a stream, which
 // is what a file whose table is already one requires.
-func (f *Filling) appendStreamTable(out []byte, nums []int, offsets map[int]int, start int) ([]byte, error) {
+func (u *increment) appendStreamTable(out []byte, nums []int, offsets map[int]int, start int) []byte {
 	// The stream is itself an object, so it needs a number and an offset of
 	// its own, and it has to be in its own table.
-	self := f.next
-	f.next++
+	self := u.next
+	u.next++
 	offsets[self] = start
 	nums = append(nums, self)
 	sort.Ints(nums)
@@ -428,19 +620,19 @@ func (f *Filling) appendStreamTable(out []byte, nums []int, offsets map[int]int,
 			body = append(body, 0, 0)
 		}
 	}
-	dict := f.updateTrailer()
+	dict := u.updateTrailer()
 	dict["Type"] = reader.Name("XRef")
-	dict["Size"] = reader.Integer(f.next)
+	dict["Size"] = reader.Integer(u.next)
 	dict["Index"] = index
 	dict["W"] = reader.Array{reader.Integer(xrefTypeWidth),
 		reader.Integer(xrefOffsetWidth), reader.Integer(xrefGenWidth)}
 	dict["Length"] = reader.Integer(len(body))
 
-	out = append(out, []byte(strconv.Itoa(self)+" 0 obj\n")...)
+	out = append(out, []byte(objHeader(self))...)
 	out = reader.AppendObject(out, &reader.Stream{Dict: dict, Raw: body})
 	out = append(out, []byte("\nendobj\n")...)
 	out = append(out, []byte(fmt.Sprintf("startxref\n%d\n%%%%EOF\n", start))...)
-	return out, nil
+	return out
 }
 
 // runsOf breaks a sorted list of object numbers into the consecutive runs a
@@ -474,9 +666,7 @@ func lastStartxref(b []byte) (int, bool) {
 	for k < len(rest) && rest[k] >= '0' && rest[k] <= '9' {
 		k++
 	}
-	if k == j {
-		return 0, false
-	}
+	// No digits is an empty string, which Atoi refuses.
 	v, err := strconv.Atoi(string(rest[j:k]))
 	if err != nil || v <= 0 || v >= len(b) {
 		return 0, false

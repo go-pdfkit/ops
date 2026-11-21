@@ -12,7 +12,7 @@ import (
 // formFile writes a one-page document with a form in it, either with the plain
 // cross-reference table the older files use or with the stream the newer ones
 // do, since an update has to say where its objects went the same way.
-func formFile(t *testing.T, packed bool, build func(w *reader.Writer, page reader.Ref) (reader.Dict, reader.Array)) []byte {
+func formFile(t testing.TB, packed bool, build func(w *reader.Writer, page reader.Ref) (reader.Dict, reader.Array)) []byte {
 	t.Helper()
 	w := reader.NewWriter("1.7")
 	if packed {
@@ -264,6 +264,13 @@ func TestADocumentWithNoFormToFill(t *testing.T) {
 }
 
 func TestSomethingThatIsNotADocumentAtAll(t *testing.T) {
+	// A refusal not made is a nil document used, which panics: say so as a
+	// failure of this test, not as the end of the whole run.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("went on with a document that is not there: %v", r)
+		}
+	}()
 	if _, _, err := OpenForm([]byte("not a PDF")); err == nil {
 		t.Error("nonsense was opened as a document")
 	}
@@ -331,9 +338,8 @@ func TestTellingOneSortOfTableFromTheOther(t *testing.T) {
 	if !xrefIsStream([]byte("12 0 obj <</Type/XRef>>"), 0) {
 		t.Error("a stream was taken for a plain table")
 	}
-	if xrefIsStream([]byte("xref"), 99) {
-		t.Error("an offset past the end of the file said something")
-	}
+	// Offsets outside the file are asserted in TestStartxrefAndSectionGuards,
+	// which survives the guard being removed.
 }
 
 func TestAFileTheReaderHadToRepairIsNotAddedTo(t *testing.T) {
@@ -341,6 +347,11 @@ func TestAFileTheReaderHadToRepairIsNotAddedTo(t *testing.T) {
 	// where it begins. A file whose section was wrong enough to be rebuilt
 	// has no such place worth pointing at, and an update naming offsets into
 	// a table that was never right is a file nothing can read.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("went on with a file it had to repair: %v", r)
+		}
+	}()
 	src := oneTextField(t, false, nil)
 	broken := bytes.Replace(src, []byte("startxref"), []byte("startxrEf"), 1)
 	if _, _, err := OpenForm(broken); err == nil {
@@ -409,11 +420,11 @@ func TestAFileWhoseCountOfObjectsIsTooSmall(t *testing.T) {
 	// A file claiming to hold two objects while its field is object nine must
 	// not have this write a tenth on top of something.
 	f.doc.Trailer()["Size"] = reader.Integer(2)
-	if got := f.highestObject(); got < 2 {
+	if got := f.highest(); got < 2 {
 		t.Errorf("the highest object is %d, and the form's own field is above that", got)
 	}
 	ref, _ := f.form.Fields()[0].Ref()
-	if got := f.highestObject(); got < ref.Num {
+	if got := f.highest(); got < ref.Num {
 		t.Errorf("the highest object is %d and the field is object %d", got, ref.Num)
 	}
 }
@@ -599,7 +610,7 @@ func TestAWidgetNumberedAboveItsField(t *testing.T) {
 		t.Skipf("the widget is object %d and the field %d, which is not the case this is about",
 			widgetRef.Num, fieldRef.Num)
 	}
-	if got := f.highestObject(); got < widgetRef.Num {
+	if got := f.highest(); got < widgetRef.Num {
 		t.Errorf("the highest object is %d and the widget is object %d", got, widgetRef.Num)
 	}
 }

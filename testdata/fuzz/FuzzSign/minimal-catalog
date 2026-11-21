@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("%PDF-1.4\n1 0 obj\n<</Type/Catalog>>\nendobj\ntrailer\n<</Root 1 0 R>>\nstartxref\n0\n%%EOF\n")
