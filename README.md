@@ -1023,13 +1023,24 @@ text. All of those objects are written **in the same incremental update as the
 signature**, so they are inside the `/ByteRange`: an appearance edited after
 signing breaks the signature (tested).
 
-Refused, each with a sentinel: a box that is not finite, is inverted or has no
-area (`ErrAppearanceRect`), a box lying outside the page's `/MediaBox` by more
-than its own size (`ErrAppearanceOffPage`), an image that does not decode or is
-over `MaxPixels` (`ErrAppearanceImage`), text over 4 KiB
-(`ErrAppearanceText`), a font size or a colour that is not finite
-(`ErrAppearanceFontSize`, `ErrAppearanceColor`), and an existing field with no
-usable rectangle when none was given (`ErrNoFieldRect`).
+Only the field's **first** widget gets the appearance. The text is Helvetica in
+WinAnsiEncoding, so a character that encoding has no code for (Cyrillic, CJK,
+an emoji) is **refused, not dropped**: `ErrAppearanceText` names the first one
+and asks for a `Text` that can be drawn. That includes the default text when
+the certificate's common name has such a character (a Cyrillic signer must pass
+a `Text`, or an `Image`). Drawing them needs a Unicode (Type0) font, which is
+future work.
+
+Refused, each with a sentinel: a box that is not finite, is inverted, has no
+area or has a coordinate beyond 14400 points, the page limit of ISO 32000-1
+Annex C (`ErrAppearanceRect`), a box lying outside the page by more than its own
+size, the page being its `/CropBox` when it has one and its `/MediaBox`
+otherwise (`ErrAppearanceOffPage`), an image that does not decode or is over
+`MaxPixels` (`ErrAppearanceImage`), text over 4 KiB or that cannot be drawn
+(`ErrAppearanceText`), a font size that is neither 0 nor from 1 to 1000, or a
+colour that is not finite (`ErrAppearanceFontSize`, `ErrAppearanceColor`), and
+an existing field with no widget, or none with a usable rectangle when none was
+given (`ErrNoFieldRect`).
 
 ```
 pdfops sign -key key.pem -cert cert.pem -visible 50,50,250,110 -text "Approved" contract.pdf signed.pdf

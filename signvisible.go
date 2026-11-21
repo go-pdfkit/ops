@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/go-pdfkit/forms"
@@ -28,8 +29,10 @@ import (
 // [SignOptions.Appearance] keeps the signature invisible.
 type SignAppearance struct {
 	// Rect is the box, x0 y0 x1 y1 in the page's own points (the page is
-	// [SignOptions.Page]). When signing an EXISTING empty signature field, the
-	// zero value means the field widget's own /Rect.
+	// [SignOptions.Page]), no coordinate beyond 14400 in absolute value. When
+	// signing an EXISTING empty signature field, the zero value means the field
+	// widget's own /Rect, and only the field's FIRST widget gets the appearance
+	// (a field shown in several places is drawn in one).
 	Rect [4]float64
 	// Image is an optional picture, in any format [Doc.Picture] reads. Its
 	// aspect ratio is kept and it is fitted and centred in the box.
@@ -37,10 +40,13 @@ type SignAppearance struct {
 	// Text is optional, drawn in Helvetica over the image; a \n starts a line
 	// and long lines are wrapped. When Image and Text are both empty the text is
 	// "Digitally signed by <the certificate's common name>" and a line with the
-	// signing time in RFC 3339, UTC.
+	// signing time in RFC 3339, UTC. Only characters WinAnsiEncoding has a code
+	// for can be drawn: any other (Cyrillic, CJK, ...) is refused with
+	// [ErrAppearanceText], in the default text too, when the common name has
+	// one; pass a Text of your own then. A Unicode (Type0) font is future work.
 	Text string
-	// FontSize is the text's size in points; 0 means the largest, up to 24,
-	// that fits the box.
+	// FontSize is the text's size in points: 0 means the largest, up to 24,
+	// that fits the box; any other value is from 1 to 1000.
 	FontSize float64
 	// Color is the text's RGB, each 0..1; the zero value is black.
 	Color [3]float64
@@ -51,17 +57,23 @@ type SignAppearance struct {
 
 // The refusals an appearance can meet.
 var (
-	// ErrAppearanceRect: the box is not finite, is inverted, or has no area.
-	ErrAppearanceRect = errors.New("ops: the signature's box is not a finite box with an area")
+	// ErrAppearanceRect: the box is not finite, is inverted, has no area, or
+	// has a coordinate beyond 14400 points.
+	ErrAppearanceRect = errors.New("ops: the signature's box is not a box with an area, within 14400 points of the origin")
 	// ErrAppearanceOffPage: the box lies outside the page's MediaBox by more
 	// than the box itself.
 	ErrAppearanceOffPage = errors.New("ops: the signature's box is far outside the page")
 	// ErrAppearanceImage: the image is over the pixel ceiling or does not decode.
 	ErrAppearanceImage = errors.New("ops: the signature's image cannot be used")
-	// ErrAppearanceText: the text is longer than maxAppearanceText bytes.
-	ErrAppearanceText = errors.New("ops: the signature's text is too long")
-	// ErrAppearanceFontSize: the font size is not finite or is negative.
-	ErrAppearanceFontSize = errors.New("ops: the signature's font size is not a finite, positive number")
+	// ErrAppearanceText: the text is longer than maxAppearanceText bytes, or
+	// holds a character Helvetica in WinAnsiEncoding cannot draw (the message
+	// names the first). That is also true of the default text, which is made of
+	// the certificate's common name: pass a Text that can be drawn. A Unicode
+	// (Type0) font appearance is future work; nothing is dropped meanwhile.
+	ErrAppearanceText = errors.New("ops: the signature's text cannot be drawn")
+	// ErrAppearanceFontSize: the font size is not finite, or is a non-zero
+	// size outside minFontSize..maxFontSize points.
+	ErrAppearanceFontSize = errors.New("ops: the signature's font size is not 0 (fitted) or a number from 1 to 1000")
 	// ErrAppearanceColor: a colour component is not finite.
 	ErrAppearanceColor = errors.New("ops: the signature's colour is not made of finite numbers")
 	// ErrNoFieldRect: the field being signed has no usable /Rect and none was
@@ -78,8 +90,12 @@ const (
 	fitMax  = 24.0
 	fitMin  = 4.0
 	fitStep = 0.5
-	// maxTextHeight caps the height text is laid out in, in points.
-	maxTextHeight = 1e6
+	// The font sizes a caller may ask for, in points.
+	minFontSize = 1.0
+	maxFontSize = 1000.0
+	// maxCoord is the largest coordinate a box may have: 14400 points is the
+	// page limit of ISO 32000-1 Annex C, and a number past it is not a page.
+	maxCoord = 14400.0
 )
 
 // defaultPageBox is what a page that gives no readable /MediaBox is judged
@@ -100,10 +116,15 @@ type visible struct {
 // checkRect says whether a box is finite and has an area, in a size that is
 // itself finite.
 func checkRect(r [4]float64) error {
-	// A coordinate that is NaN or infinite makes w or h NaN or infinite (or
-	// the comparison false), so the size test below refuses it.
+	// A coordinate that is NaN makes w or h NaN, and the comparison false, so
+	// the size test below refuses it; an infinite one is past maxCoord.
+	for _, v := range r {
+		if math.Abs(v) > maxCoord {
+			return fmt.Errorf("%w: %v has a coordinate past %v", ErrAppearanceRect, r, maxCoord)
+		}
+	}
 	w, h := r[2]-r[0], r[3]-r[1]
-	if !(w > 0) || !(h > 0) || math.IsInf(w, 0) || math.IsInf(h, 0) {
+	if !(w > 0) || !(h > 0) {
 		return fmt.Errorf("%w: %v", ErrAppearanceRect, r)
 	}
 	return nil
@@ -114,7 +135,7 @@ func checkRect(r [4]float64) error {
 func checkAppearance(d *reader.Document, o SignOptions, field *forms.Field) (*visible, error) {
 	a := o.Appearance
 	v := &visible{rect: a.Rect, size: a.FontSize, colour: a.Color}
-	if math.IsNaN(a.FontSize) || math.IsInf(a.FontSize, 0) || a.FontSize < 0 {
+	if math.IsNaN(a.FontSize) || (a.FontSize != 0 && (a.FontSize < minFontSize || a.FontSize > maxFontSize)) {
 		return nil, fmt.Errorf("%w: %v", ErrAppearanceFontSize, a.FontSize)
 	}
 	for _, c := range a.Color {
@@ -125,13 +146,27 @@ func checkAppearance(d *reader.Document, o SignOptions, field *forms.Field) (*vi
 	if len(a.Text) > maxAppearanceText {
 		return nil, fmt.Errorf("%w: %d bytes, at most %d", ErrAppearanceText, len(a.Text), maxAppearanceText)
 	}
+	// What will be drawn: the text given, or the default one when there is
+	// neither text nor image. Either is refused, not trimmed, for a character
+	// WinAnsi has no code for.
+	shown := a.Text
+	if shown == "" && len(a.Image) == 0 {
+		shown = defaultSignatureText(o, time.Time{})
+	}
+	if r, bad := undrawable(shown); bad {
+		return nil, fmt.Errorf("%w: %q (U+%04X) has no code in WinAnsiEncoding; pass a Text that Helvetica can draw",
+			ErrAppearanceText, r, r)
+	}
 	page := o.Page
 	if page == 0 {
 		page = 1
 	}
 	if field != nil {
-		// forms gives a field that has no widget of its own one (with a zero
-		// /Rect), so Widgets is never empty; TestAFieldWithNoUsableRect pins it.
+		// A /Kids that is empty, or whose entries are not dictionaries,
+		// leaves forms with no widget at all.
+		if len(field.Widgets) == 0 {
+			return nil, fmt.Errorf("%w: %q has no widget", ErrNoFieldRect, field.Name)
+		}
 		v.widget = &field.Widgets[0]
 		if v.widget.Page > 0 {
 			page = v.widget.Page
@@ -161,25 +196,47 @@ func checkAppearance(d *reader.Document, o SignOptions, field *forms.Field) (*vi
 	return v, nil
 }
 
-// checkOnPage refuses a box that lies outside the page's MediaBox, by a gap
-// larger than the box's own width (to its left or right) or height (above or
-// below). A page with no readable MediaBox is judged
-// against defaultPageBox.
+// undrawable is the first character of s that encodeWinAnsi would drop. A new
+// line is not one: it starts a line.
+func undrawable(s string) (rune, bool) {
+	for _, r := range strings.ReplaceAll(s, "\r\n", "\n") {
+		if r == '\n' {
+			continue
+		}
+		if len(encodeWinAnsi(string(r))) == 0 {
+			return r, true
+		}
+	}
+	return 0, false
+}
+
+// pageBox reads a page box: four numbers, which may be indirect.
+func pageBox(d *reader.Document, pd reader.Dict, key reader.Name) ([4]float64, bool) {
+	arr, ok := reader.ToArray(followRef(d, pd.Get(key)))
+	if !ok || len(arr) != 4 {
+		return [4]float64{}, false
+	}
+	var n [4]float64
+	for i, e := range arr {
+		if n[i], ok = reader.ToFloat(followRef(d, e)); !ok {
+			return [4]float64{}, false
+		}
+	}
+	return [4]float64{min(n[0], n[2]), min(n[1], n[3]), max(n[0], n[2]), max(n[1], n[3])}, true
+}
+
+// checkOnPage refuses a box that lies outside the page, by a gap larger than
+// the box's own width (to its left or right) or height (above or below). The
+// page is its /CropBox when it has one (inherited, as the reader gives it),
+// else its /MediaBox, else defaultPageBox when neither can be read.
 func checkOnPage(d *reader.Document, page int, r [4]float64) error {
 	mb := defaultPageBox
-	// A page that cannot be read has no /MediaBox and gives the default.
+	// A page that cannot be read has no boxes and gives the default.
 	pd, _ := d.Page(page)
-	if arr, ok := reader.ToArray(followRef(d, pd.Get("MediaBox"))); ok && len(arr) == 4 {
-		var n [4]float64
-		good := true
-		for i, e := range arr {
-			var f float64
-			f, ok = reader.ToFloat(followRef(d, e))
-			n[i], good = f, good && ok
-		}
-		if good {
-			mb = [4]float64{min(n[0], n[2]), min(n[1], n[3]), max(n[0], n[2]), max(n[1], n[3])}
-		}
+	if b, ok := pageBox(d, pd, "CropBox"); ok {
+		mb = b
+	} else if b, ok = pageBox(d, pd, "MediaBox"); ok {
+		mb = b
 	}
 	w, h := r[2]-r[0], r[3]-r[1]
 	if r[0] > mb[2]+w || r[2] < mb[0]-w || r[1] > mb[3]+h || r[3] < mb[1]-h {
@@ -234,9 +291,9 @@ func (s *signing) draw(widget reader.Dict, v *visible, o SignOptions, when time.
 	if text != "" {
 		resources["Font"] = stampResources(map[Font]bool{Helvetica: true}, nil)["Font"]
 		pad := min(2, w/4, h/4)
-		// th is capped: it only says how many lines may be drawn, and an int
-		// made of a float near the top of its range is not defined.
-		tw, th := w-2*pad, min(h-2*pad, maxTextHeight)
+		// The box is within maxCoord of the origin, so h is a small float and
+		// the number of lines it holds is a small int.
+		tw, th := w-2*pad, h-2*pad
 		size := v.size
 		if size == 0 {
 			size = fitSize(text, tw, th)

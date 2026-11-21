@@ -474,6 +474,11 @@ func TestAnAppearanceThatCannotBeDrawnIsRefused(t *testing.T) {
 		{"text over its bound", SignAppearance{Rect: sigBox, Text: strings.Repeat("a", maxAppearanceText+1)}, SignAppearance{Rect: sigBox, Text: strings.Repeat("a", maxAppearanceText)}, ErrAppearanceText},
 		{"a font size that is nan", SignAppearance{Rect: sigBox, FontSize: nan}, SignAppearance{Rect: sigBox, FontSize: 9}, ErrAppearanceFontSize},
 		{"a font size that is infinite", SignAppearance{Rect: sigBox, FontSize: inf}, SignAppearance{Rect: sigBox, FontSize: 9}, ErrAppearanceFontSize},
+		{"a font size under 1", SignAppearance{Rect: sigBox, FontSize: 0.99}, SignAppearance{Rect: sigBox, FontSize: 1}, ErrAppearanceFontSize},
+		{"a font size over 1000", SignAppearance{Rect: sigBox, FontSize: 1000.5}, SignAppearance{Rect: sigBox, FontSize: 1000}, ErrAppearanceFontSize},
+		{"a coordinate past 14400", SignAppearance{Rect: [4]float64{0, 0, 14400.5, 10}}, SignAppearance{Rect: [4]float64{0, 0, 14400, 10}}, ErrAppearanceRect},
+		{"a coordinate past -14400", SignAppearance{Rect: [4]float64{-14400.5, 0, 0, 10}}, SignAppearance{Rect: [4]float64{-14400, 0, 0, 10}}, ErrAppearanceRect},
+		{"a 300-digit coordinate", SignAppearance{Rect: [4]float64{0, 0, 1e300, 10}}, SignAppearance{Rect: [4]float64{0, 0, 10, 10}}, ErrAppearanceRect},
 		{"a negative font size", SignAppearance{Rect: sigBox, FontSize: -1}, SignAppearance{Rect: sigBox, FontSize: 0}, ErrAppearanceFontSize},
 		{"a colour that is nan", SignAppearance{Rect: sigBox, Color: [3]float64{0, nan, 0}}, SignAppearance{Rect: sigBox, Color: [3]float64{0, 1, 0}}, ErrAppearanceColor},
 		{"a colour that is infinite", SignAppearance{Rect: sigBox, Color: [3]float64{inf, 0, 0}}, SignAppearance{Rect: sigBox, Color: [3]float64{1, 0, 0}}, ErrAppearanceColor},
@@ -578,5 +583,115 @@ func TestAFittedLineExactlyAsWideAsTheBoxFits(t *testing.T) {
 	}
 	if got := fitSize("Signed", w-0.01, 1000); got >= fitMax {
 		t.Errorf("a box a hair too narrow: %v", got)
+	}
+}
+
+// signerNamed is a throwaway certificate whose common name is cn.
+func signerNamed(t *testing.T, cn string) (ed25519.PrivateKey, *x509.Certificate) {
+	t.Helper()
+	_, signer, _ := ed25519.GenerateKey(rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(9), Subject: pkix.Name{CommonName: cn},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, signer.Public(), signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signer, cert
+}
+
+func TestATextThatWinAnsiCannotDrawIsRefusedNotDropped(t *testing.T) {
+	for _, c := range []struct {
+		name, cn, text string
+		want           string // the rune the error names; "" = signs
+		image          bool
+	}{
+		{"cyrillic name, default text", "Иван Петров", "", "U+0418", false},
+		{"cjk name, default text", "山田太郎", "", "U+5C71", false},
+		{"cyrillic custom text", "Ivan", "Подписано", "U+041F", false},
+		{"cjk custom text", "Ivan", "Approved 承認", "U+627F", false},
+		{"an emoji, past the BMP", "Ivan", "ok \U0001F600", "U+1F600", false},
+		{"a tab", "Ivan", "a\tb", "U+0009", false},
+		{"a lone carriage return", "Ivan", "a\rb", "U+000D", false},
+		{"the euro sign has a code", "Ivan", "5 €", "", false},
+		{"accents have codes", "Zoë Müller", "", "", false},
+		{"windows new lines are lines", "Ivan", "a\r\nb\nc", "", false},
+		{"a Cyrillic name is not drawn beside an image", "Иван", "", "", true},
+	} {
+		signer, cert := signerNamed(t, c.cn)
+		a := SignAppearance{Rect: [4]float64{0, 0, 200, 60}, Text: c.text}
+		if c.image {
+			a.Image = solidPNG(t, 4, 4, color.NRGBA{0, 0, 0, 255})
+		}
+		o := visibleOpts(t, a)
+		o.Signer, o.Certificate = signer, cert
+		out, err := signOrFail(t, sigBlank(t), o)
+		if c.want == "" {
+			if err != nil || out == nil {
+				t.Errorf("%s: %v", c.name, err)
+			}
+			continue
+		}
+		if !errors.Is(err, ErrAppearanceText) || out != nil || !strings.Contains(err.Error(), c.want) ||
+			!strings.Contains(err.Error(), "pass a Text") {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+	// An invisible signature by the same Cyrillic name has no text to draw.
+	signer, cert := signerNamed(t, "Иван Петров")
+	o := opts(t, "ecdsa")
+	o.Signer, o.Certificate = signer, cert
+	if _, err := signOrFail(t, sigBlank(t), o); err != nil {
+		t.Errorf("an invisible signature: %v", err)
+	}
+}
+
+func TestAFieldWithNoWidgetKidsIsRefusedNotAPanic(t *testing.T) {
+	for name, kids := range map[string]reader.Array{
+		"empty /Kids":            {},
+		"a reference to nothing": {reader.Ref{Num: 999}},
+		"a kid that is a number": {reader.Integer(3)},
+	} {
+		src := formFile(t, false, func(w *reader.Writer, page reader.Ref) (reader.Dict, reader.Array) {
+			f := reader.Dict{"FT": reader.Name("Sig"), "T": reader.String("approval"), "Kids": kids}
+			return reader.Dict{"Fields": reader.Array{w.Add(f)}}, nil
+		})
+		for _, a := range []SignAppearance{{}, {Rect: sigBox}} {
+			o := visibleOpts(t, a)
+			o.Field = "approval"
+			if out, err := signOrFail(t, src, o); !errors.Is(err, ErrNoFieldRect) || out != nil {
+				t.Errorf("%s, Rect %v: %v", name, a.Rect, err)
+			}
+		}
+	}
+}
+
+func TestAPageWithACropBoxIsJudgedByIt(t *testing.T) {
+	a4 := reader.Array{reader.Integer(0), reader.Integer(0), reader.Integer(595), reader.Integer(842)}
+	crop := reader.Array{reader.Integer(0), reader.Integer(0), reader.Integer(100), reader.Integer(100)}
+	box := SignAppearance{Rect: [4]float64{500, 700, 560, 740}}
+	for name, c := range map[string]struct {
+		crop reader.Object
+		ok   bool
+	}{
+		"no CropBox":                  {nil, true},
+		"a small CropBox":             {crop, false},
+		"a CropBox that is no array":  {reader.Integer(1), true},
+		"a CropBox of three numbers":  {reader.Array{reader.Integer(0), reader.Integer(0), reader.Integer(100)}, true},
+		"a CropBox with a name in it": {reader.Array{reader.Integer(0), reader.Integer(0), reader.Name("x"), reader.Integer(100)}, true},
+	} {
+		src := buildPDF(t, 1, func(_ int, d reader.Dict) {
+			d["MediaBox"] = a4
+			if c.crop != nil {
+				d["CropBox"] = c.crop
+			}
+		})
+		_, err := signOrFail(t, src, visibleOpts(t, box))
+		if c.ok && err != nil || !c.ok && !errors.Is(err, ErrAppearanceOffPage) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
