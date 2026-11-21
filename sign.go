@@ -200,6 +200,9 @@ func Sign(src []byte, o SignOptions) ([]byte, error) {
 		}
 	}
 	s.next = s.highest() + 1
+	if err := s.room(); err != nil {
+		return nil, err
+	}
 	sigRef := s.alloc()
 
 	// The form dictionary: the one the document has, wherever it lives, or a
@@ -267,6 +270,9 @@ func Sign(src []byte, o SignOptions) ([]byte, error) {
 	}
 	dict, brAt, contentsAt := signatureDict(sub, reserve, o, when)
 
+	if err := s.room(); err != nil {
+		return nil, err
+	}
 	out, offsets := s.append(s.written, map[int][]byte{sigRef.Num: dict})
 	if int64(len(out)) > maxSignedFile {
 		return nil, fmt.Errorf("ops: a file of %d bytes is larger than a /ByteRange of %d digits can describe", len(out), rangeDigits)

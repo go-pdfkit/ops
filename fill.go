@@ -73,6 +73,9 @@ func openFormIn(b []byte, d *reader.Document) (*Filling, bool, error) {
 	}
 	f := &Filling{increment: inc, form: form}
 	f.next = f.highest() + 1
+	if err := f.room(); err != nil {
+		return nil, false, err
+	}
 	if catalog, err := d.Catalog(); err == nil {
 		if ref, ok := catalog.Get("AcroForm").(reader.Ref); ok {
 			f.formRef = ref
@@ -109,6 +112,9 @@ func (f *Filling) Bytes() ([]byte, error) {
 		dict := copyDict(f.form.Dict())
 		delete(dict, "NeedAppearances")
 		written[f.formRef.Num] = dict
+	}
+	if err := f.room(); err != nil {
+		return nil, err
 	}
 	out, _ := f.append(written, nil)
 	return out, nil
@@ -343,6 +349,29 @@ func (u *increment) highest() int {
 // adding one to it cannot overflow an int on a 32-bit build.
 const maxObjectNumber = 1<<31 - 2
 
+// maxIndirectObjects is the most indirect objects ISO 32000-1 Annex C lets a
+// file hold. An update numbers its objects on from the file's highest, and a
+// file that already lists a number near the top of an int would have it write
+// numbers that no reader accepts: qpdf calls such a file damaged, and pdfsig
+// finds no signature in it at all.
+const maxIndirectObjects = 8_388_607
+
+// ErrTooManyObjects is returned when an update would number an object past
+// the most a PDF may hold.
+var ErrTooManyObjects = errors.New("ops: the update would number an object past the most a PDF may hold")
+
+// room refuses an update whose next object number is past maxIndirectObjects.
+// It is asked twice: once the numbering starts, so that counting on from there
+// cannot overflow an int even on a 32-bit build, and again before writing,
+// once every object has its number. A table written as a stream takes u.next
+// itself, which is why next, and not next-1, is what must fit.
+func (u *increment) room() error {
+	if u.next > maxIndirectObjects {
+		return fmt.Errorf("%w: the next would be %d, and at most %d may be", ErrTooManyObjects, u.next, maxIndirectObjects)
+	}
+	return nil
+}
+
 // maxSections bounds how many sections /Prev is followed through.
 const maxSections = 4096
 
@@ -443,8 +472,10 @@ func streamSection(b []byte, at int) (reader.Dict, int) {
 			first, ok1 := reader.ToInt(idx[i])
 			count, ok2 := reader.ToInt(idx[i+1])
 			if ok1 && ok2 && first >= 0 && count > 0 && first <= maxObjectNumber && count <= maxObjectNumber {
-				if n := int(first + count - 1); n > high && n <= maxObjectNumber {
-					high = n
+				// Compared as it was read, and converted once it is known to
+				// fit: converting first would truncate on a 32-bit build.
+				if n := first + count - 1; n > int64(high) && n <= maxObjectNumber {
+					high = int(n)
 				}
 			}
 		}

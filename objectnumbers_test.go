@@ -436,3 +436,89 @@ func TestXrefHighestRefusesToBelieveWhatIsGarbage(t *testing.T) {
 		t.Errorf("a chain of two: highest %d, want 5", got)
 	}
 }
+
+// withSize is smallSize with its trailer saying it holds n objects.
+func withSize(t *testing.T, n int) []byte {
+	t.Helper()
+	return bytes.Replace(smallSize(t), []byte("/Size 03"), []byte("/Size "+strconv.Itoa(n)), 1)
+}
+
+// TestASignatureIsNotNumberedPastTheMostAPDFMayHold is the re-review's repro:
+// a file listing an object near the top of an int had the signature numbered
+// past it, and the result was a file qpdf called damaged and pdfsig found no
+// signature in. The bound is driven from the constant, from both sides.
+func TestASignatureIsNotNumberedPastTheMostAPDFMayHold(t *testing.T) {
+	// A new signature takes two numbers, the signature and its widget, and
+	// the table is classic, so the last file that fits has its highest object
+	// three below the bound: /Size maxIndirectObjects-2.
+	out, err := signOrFail(t, withSize(t, maxIndirectObjects-2), opts(t, "ecdsa"))
+	if err != nil {
+		t.Fatalf("the last file there is room for: %v", err)
+	}
+	if len(ours(t, out, 1)) != 1 {
+		t.Error("the signature at the bound does not verify")
+	}
+	d, err := reader.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size, _ := reader.ToInt(d.Trailer().Get("Size")); size != maxIndirectObjects {
+		t.Errorf("the update says %d objects, want %d", size, maxIndirectObjects)
+	}
+
+	for name, size := range map[string]int{
+		// Refused once the objects are numbered: the widget would be past it.
+		"one number short": maxIndirectObjects - 1,
+		// Refused as soon as the numbering starts.
+		"already full": maxIndirectObjects + 1,
+	} {
+		if _, err := signOrFail(t, withSize(t, size), opts(t, "ecdsa")); !errors.Is(err, ErrTooManyObjects) {
+			t.Errorf("%s (/Size %d): %v, want ErrTooManyObjects", name, size, err)
+		}
+	}
+
+	// The re-review's own file: a free entry listed at the top of what a
+	// section may say.
+	src := smallSize(t)
+	at := bytes.Index(src, []byte("trailer"))
+	huge := strconv.Itoa(maxObjectNumber) + " 1\n0000000000 00000 f \n"
+	listed := append(append(append([]byte(nil), src[:at]...), huge...), src[at:]...)
+	if _, err := signOrFail(t, listed, opts(t, "ecdsa")); !errors.Is(err, ErrTooManyObjects) {
+		t.Errorf("an object listed at %d: %v, want ErrTooManyObjects", maxObjectNumber, err)
+	}
+}
+
+// TestAFillIsNotNumberedPastTheMostAPDFMayHold: the same bound on the other
+// writer of updates. Filling a text field writes one appearance stream.
+func TestAFillIsNotNumberedPastTheMostAPDFMayHold(t *testing.T) {
+	src := oneTextField(t, false, nil)
+	d, err := reader.Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size, _ := reader.ToInt(d.Trailer().Get("Size"))
+	have := []byte("/Size " + strconv.FormatInt(size, 10))
+	if !bytes.Contains(src, have) {
+		t.Fatalf("the form file does not say %s", have)
+	}
+	resized := func(n int) []byte {
+		return bytes.Replace(src, have, []byte("/Size "+strconv.Itoa(n)), 1)
+	}
+
+	if _, _, err := OpenForm(resized(maxIndirectObjects + 1)); !errors.Is(err, ErrTooManyObjects) {
+		t.Errorf("a full file was opened to be filled: %v", err)
+	}
+
+	for n, want := range map[int]error{maxIndirectObjects - 1: nil, maxIndirectObjects: ErrTooManyObjects} {
+		f, ok, err := OpenForm(resized(n))
+		if err != nil || !ok {
+			t.Fatalf("/Size %d: %v %v", n, ok, err)
+		}
+		if err := f.Fill("name", "x"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Bytes(); !errors.Is(err, want) {
+			t.Errorf("/Size %d: %v, want %v", n, err, want)
+		}
+	}
+}

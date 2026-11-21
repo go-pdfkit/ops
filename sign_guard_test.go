@@ -3,6 +3,7 @@ package ops
 import (
 	"bytes"
 	"errors"
+	"math"
 	"strconv"
 	"testing"
 
@@ -144,7 +145,9 @@ func TestAFileWithNoFormIsGivenTheFirstName(t *testing.T) {
 // and strings.Repeat panicked, and 1<<36 asked for 128 GiB. Both are refused,
 // by name, before anything is allocated; the bound itself is allowed.
 func TestAReserveBeyondTheBoundIsRefused(t *testing.T) {
-	for _, reserve := range []int{maxReserve + 1, 1 << 36, 1 << 62} {
+	// The largest int there is, rather than 1<<62, so the test also builds where
+	// an int is 32 bits: twice it overflows there just as 1<<62 does here.
+	for _, reserve := range []int{maxReserve + 1, maxReserve * 1024, math.MaxInt} {
 		o := opts(t, "ecdsa")
 		o.Reserve = reserve
 		out, err := signOrFail(t, simple(t, 1), o)

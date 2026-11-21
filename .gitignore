@@ -1,3 +1,4 @@
 cov.out
 coverage.out
 *.pdf
+!testdata/*.pdf
