@@ -113,6 +113,7 @@ func TestSignVerbRefusals(t *testing.T) {
 		"bad subfilter":   {"sign", "-key", key, "-cert", cert, "-subfilter", "x", in, out},
 		"bad hash":        {"sign", "-key", key, "-cert", cert, "-hash", "md5", in, out},
 		"one argument":    {"sign", "-key", key, "-cert", cert, in},
+		"three arguments": {"sign", "-key", key, "-cert", cert, in, out, out + ".extra"},
 		"unknown sub-opt": {"sign", "-key", key, "-cert", cert, "-nope", in, out},
 	} {
 		if code, _, msg := exec(args...); code == 0 {
@@ -190,8 +191,12 @@ func TestSignVerbCAdESWithAChainAndOddInputs(t *testing.T) {
 	if _, err := parsePrivateKey(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})); err == nil {
 		t.Error("an X25519 key was taken for a signing key")
 	}
+	// The parser's own reason is what reaches the user, not a guess about a
+	// key type that was never read.
 	if _, err := parsePrivateKey(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte{1}})); err == nil {
 		t.Error("a bad PKCS #8 key was read")
+	} else if strings.Contains(err.Error(), "cannot sign a PDF") {
+		t.Errorf("a key that did not parse was reported as a key type: %v", err)
 	}
 	if _, err := parseCertificates(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte{1}})); err == nil {
 		t.Error("a bad certificate was read")
