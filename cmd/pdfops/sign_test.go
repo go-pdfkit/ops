@@ -235,6 +235,8 @@ func TestSignVerbSaysWhyItRefused(t *testing.T) {
 		{"missing input", []string{"-key", key, "-cert", cert, absent, out}, "absent"},
 		{"input is a directory", []string{"-key", key, "-cert", cert, dir, out}, "is a directory"},
 		{"not a pdf", []string{"-key", key, "-cert", cert, garbage, out}, "cannot be read as a PDF"},
+		{"reserve of 1<<62", []string{"-key", key, "-cert", cert, "-reserve", "4611686018427387904", in, out}, "larger than the most one may reserve"},
+		{"reserve of 1<<36", []string{"-key", key, "-cert", cert, "-reserve", "68719476736", in, out}, "larger than the most one may reserve"},
 	} {
 		var code int
 		var msg string

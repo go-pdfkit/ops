@@ -95,6 +95,8 @@ var (
 	// ErrReserveTooSmall: the CMS signature came out larger than the space
 	// reserved for it, so nothing was written.
 	ErrReserveTooSmall = errors.New("ops: the signature does not fit in the space reserved for it")
+	// ErrReserveTooLarge: more space was asked for than a signature may reserve.
+	ErrReserveTooLarge = errors.New("ops: the space asked for the signature is larger than the most one may reserve")
 	// ErrFieldSigned: the field named already holds a signature.
 	ErrFieldSigned = errors.New("ops: the signature field is already signed")
 	// ErrNotSignatureField: the field named exists and is not a signature
@@ -117,7 +119,16 @@ const rangeDigits = 10
 
 // maxSignedFile is the largest file a /ByteRange of that width can describe.
 // A variable so that a test can reach the refusal without a 10 GB file.
-var maxSignedFile = 9_999_999_999
+//
+// An int64, so that this builds where an int is 32 bits wide: 9 999 999 999
+// does not fit one.
+var maxSignedFile int64 = 9_999_999_999
+
+// maxReserve is the most space a signature may ask for: a megabyte of DER,
+// which holds a CMS message carrying many certificates and a timestamp, and
+// is twice that in hexadecimal. A larger Reserve is refused before anything is
+// allocated for it.
+const maxReserve = 1 << 20
 
 // Sign appends a signature to a document, as an incremental update, and
 // returns the whole signed file. src itself is not modified, and is the first
@@ -167,11 +178,7 @@ func Sign(src []byte, o SignOptions) ([]byte, error) {
 		field, _ = form.Field(name)
 	}
 
-	touched := []reader.Ref{rootRef}
 	acroRef, acroIsRef := catalog["AcroForm"].(reader.Ref)
-	if acroIsRef {
-		touched = append(touched, acroRef)
-	}
 	var fieldRef, pageRef reader.Ref
 	if field != nil {
 		if field.Kind != forms.Signature {
@@ -183,7 +190,6 @@ func Sign(src []byte, o SignOptions) ([]byte, error) {
 		if fieldRef, ok = field.Ref(); !ok {
 			return nil, fmt.Errorf("ops: %q is written inside another object and cannot be changed on its own", name)
 		}
-		touched = append(touched, fieldRef)
 	} else {
 		page := o.Page
 		if page == 0 {
@@ -192,9 +198,8 @@ func Sign(src []byte, o SignOptions) ([]byte, error) {
 		if pageRef, ok = d.PageRef(page); !ok {
 			return nil, fmt.Errorf("ops: the document has no page %d to put the signature on", page)
 		}
-		touched = append(touched, pageRef)
 	}
-	s.next = s.highest(touched...) + 1
+	s.next = s.highest() + 1
 	sigRef := s.alloc()
 
 	// The form dictionary: the one the document has, wherever it lives, or a
@@ -251,6 +256,11 @@ func Sign(src []byte, o SignOptions) ([]byte, error) {
 		}
 		reserve = len(probe) + reserveSlack
 	}
+	// Checked against the bound before it is multiplied by anything: twice a
+	// reserve near the top of an int is negative.
+	if reserve > maxReserve {
+		return nil, fmt.Errorf("%w: %d bytes asked for, at most %d", ErrReserveTooLarge, reserve, maxReserve)
+	}
 	when := o.Time
 	if when.IsZero() {
 		when = now()
@@ -258,7 +268,7 @@ func Sign(src []byte, o SignOptions) ([]byte, error) {
 	dict, brAt, contentsAt := signatureDict(sub, reserve, o, when)
 
 	out, offsets := s.append(s.written, map[int][]byte{sigRef.Num: dict})
-	if len(out) > maxSignedFile {
+	if int64(len(out)) > maxSignedFile {
 		return nil, fmt.Errorf("ops: a file of %d bytes is larger than a /ByteRange of %d digits can describe", len(out), rangeDigits)
 	}
 	body := offsets[sigRef.Num] + len(objHeader(sigRef.Num))
@@ -328,15 +338,19 @@ func (s *signing) arrayAt(ref reader.Ref) (reader.Array, error) {
 
 // freeName is the first SignatureN the form does not already use.
 func freeName(form *forms.Form, hasForm bool) string {
-	for i := 1; ; i++ {
-		name := fmt.Sprintf("Signature%d", i)
-		if !hasForm {
-			return name
-		}
-		if _, taken := form.Field(name); !taken {
-			return name
+	// Each taken name is a distinct field, so with n fields one of the first
+	// n+1 names is free; the search ends there whatever the form answers.
+	n := 0
+	if hasForm {
+		n = len(form.Fields())
+	}
+	i := 1
+	for ; i <= n; i++ {
+		if _, taken := form.Field(fmt.Sprintf("Signature%d", i)); !taken {
+			break
 		}
 	}
+	return fmt.Sprintf("Signature%d", i)
 }
 
 // signatureDict writes the signature dictionary with its two placeholders, and

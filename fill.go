@@ -72,7 +72,7 @@ func openFormIn(b []byte, d *reader.Document) (*Filling, bool, error) {
 		return nil, false, err
 	}
 	f := &Filling{increment: inc, form: form}
-	f.next = f.highestObject() + 1
+	f.next = f.highest() + 1
 	if catalog, err := d.Catalog(); err == nil {
 		if ref, ok := catalog.Get("AcroForm").(reader.Ref); ok {
 			f.formRef = ref
@@ -87,28 +87,6 @@ func (f *Filling) Form() *forms.Form { return f.form }
 // Fill sets one field by name, which is what a command line or a map of
 // answers wants.
 func (f *Filling) Fill(name, value string) error { return f.form.Fill(name, value) }
-
-// highestObject is the largest object number the file already uses, so that
-// nothing written now lands on top of something already there. The trailer's
-// own count is believed only when the objects agree with it: a file may say
-// anything, and one that says too little would have this package overwrite
-// what it names.
-func (f *Filling) highestObject() int {
-	// Every object the form knows about is checked against that, since those
-	// are the ones whose numbers this is about to write beside.
-	var refs []reader.Ref
-	for _, fld := range f.form.Fields() {
-		if ref, ok := fld.Ref(); ok {
-			refs = append(refs, ref)
-		}
-		for _, w := range fld.Widgets {
-			if ref, ok := w.Ref(); ok {
-				refs = append(refs, ref)
-			}
-		}
-	}
-	return f.highest(refs...)
-}
 
 // Bytes writes the original file with the changes appended to it.
 func (f *Filling) Bytes() ([]byte, error) {
@@ -347,17 +325,146 @@ func openIncrement(b []byte, d *reader.Document) (increment, error) {
 // is believed only when the objects agree with it: a file may say anything, and
 // one that says too little would have this overwrite what it names. refs are
 // the objects the caller knows about and is about to write beside.
-func (u *increment) highest(refs ...reader.Ref) int {
-	high := 0
-	if size, ok := reader.ToInt(u.doc.Trailer().Get("Size")); ok && size > 0 {
+func (u *increment) highest() int {
+	// The sections themselves are read for the numbers they list, whatever any
+	// /Size says: a file whose /Size is too small still lists its objects, and
+	// those are what a new object must not land on. Chosen over refusing such a
+	// file because the update's own /Size can simply say the truth. Every
+	// object a caller could be about to write beside is listed in a section, so
+	// there is nothing further to check them against.
+	high := xrefHighest(u.src, u.prev)
+	if size, ok := reader.ToInt(u.doc.Trailer().Get("Size")); ok && size > 0 && int(size)-1 > high && size <= maxObjectNumber {
 		high = int(size) - 1
 	}
-	for _, ref := range refs {
-		if ref.Num > high {
-			high = ref.Num
+	return high
+}
+
+// maxObjectNumber bounds every number read from a file's own sections, so that
+// adding one to it cannot overflow an int on a 32-bit build.
+const maxObjectNumber = 1<<31 - 2
+
+// maxSections bounds how many sections /Prev is followed through.
+const maxSections = 4096
+
+// xrefHighest is the largest object number any section of the chain beginning
+// at `at` lists, free entries included, following /Prev and /XRefStm. A section
+// it cannot read ends the walk with what it has found: the reader has already
+// accepted the file, so this only ever adds to what it knows.
+func xrefHighest(b []byte, at int) int {
+	high := 0
+	seen := map[int]bool{}
+	// `at` is inside the file: the first came from lastStartxref, which refuses
+	// one that is not, and each /Prev is checked below before it is followed.
+	for hops := 0; at > 0 && !seen[at] && hops < maxSections; hops++ {
+		seen[at] = true
+		var d reader.Dict
+		var h int
+		if xrefIsStream(b, at) {
+			d, h = streamSection(b, at)
+		} else {
+			d, h = tableSection(b, at)
 		}
+		if h > high {
+			high = h
+		}
+		if hybrid, ok := reader.ToInt(d.Get("XRefStm")); ok && hybrid > 0 && hybrid < int64(len(b)) && !seen[int(hybrid)] {
+			seen[int(hybrid)] = true
+			if _, hh := streamSection(b, int(hybrid)); hh > high {
+				high = hh
+			}
+		}
+		prev, ok := reader.ToInt(d.Get("Prev"))
+		if !ok || prev <= 0 || prev >= int64(len(b)) {
+			break
+		}
+		at = int(prev)
 	}
 	return high
+}
+
+// tableSection reads one classic section: its subsections "first count" and
+// the count entries after each, then the trailer dictionary.
+func tableSection(b []byte, at int) (reader.Dict, int) {
+	rest := b[at:]
+	// xrefIsStream has said this begins with the word "xref".
+	_, rest = nextToken(rest)
+	high := 0
+	// Every pass takes two words at least, so the loop ends with the bytes; a
+	// file that stops before its trailer gives no dictionary.
+	for len(rest) != 0 {
+		var tok string
+		tok, rest = nextToken(rest)
+		if tok == "trailer" {
+			break
+		}
+		first, err1 := strconv.Atoi(tok)
+		var cs string
+		cs, rest = nextToken(rest)
+		count, err2 := strconv.Atoi(cs)
+		if err1 != nil || err2 != nil || first < 0 || count < 0 || first > maxObjectNumber || count > maxObjectNumber {
+			return nil, high
+		}
+		// Each entry is three words; a count that promises more than the file
+		// holds stops where the file does.
+		for i := 0; i < count; i++ {
+			var last string
+			for w := 0; w < 3; w++ {
+				last, rest = nextToken(rest)
+			}
+			if last == "" {
+				return nil, high
+			}
+			if n := first + i; n > high && n <= maxObjectNumber {
+				high = n
+			}
+		}
+	}
+	// A trailer that does not parse is nil, which has no /Prev to follow.
+	obj, _, _ := reader.ParseObject(rest)
+	d, _ := obj.(reader.Dict)
+	return d, high
+}
+
+// unresolved is the resolver a section is read with: the sections are what
+// says where objects are, so none can be looked up while they are read.
+func unresolved(reader.Ref) (reader.Object, error) { return reader.Null{}, nil }
+
+// streamSection reads one cross-reference stream's /Index (or /Size) and the
+// dictionary that carries /Prev.
+func streamSection(b []byte, at int) (reader.Dict, int) {
+	_, obj, _, err := reader.ParseIndirectObject(b[at:], unresolved)
+	s, ok := obj.(*reader.Stream)
+	if err != nil || !ok {
+		return nil, 0
+	}
+	high := 0
+	if idx, ok := s.Dict.Get("Index").(reader.Array); ok {
+		for i := 0; i+1 < len(idx); i += 2 {
+			first, ok1 := reader.ToInt(idx[i])
+			count, ok2 := reader.ToInt(idx[i+1])
+			if ok1 && ok2 && first >= 0 && count > 0 && first <= maxObjectNumber && count <= maxObjectNumber {
+				if n := int(first + count - 1); n > high && n <= maxObjectNumber {
+					high = n
+				}
+			}
+		}
+	} else if size, ok := reader.ToInt(s.Dict.Get("Size")); ok && size > 0 && size <= maxObjectNumber {
+		high = int(size) - 1
+	}
+	return s.Dict, high
+}
+
+// nextToken is the next whitespace-separated word, and what follows it.
+func nextToken(b []byte) (string, []byte) {
+	i := 0
+	for i < len(b) && (b[i] == ' ' || b[i] == '\r' || b[i] == '\n' || b[i] == '\t' || b[i] == 0 || b[i] == '\f') {
+		i++
+	}
+	j := i
+	for j < len(b) && !(b[j] == ' ' || b[j] == '\r' || b[j] == '\n' || b[j] == '\t' || b[j] == 0 || b[j] == '\f') {
+		j++
+	}
+	return string(b[i:j]), b[j:]
 }
 
 // append writes the original file, then the objects that changed, then a

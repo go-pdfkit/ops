@@ -112,6 +112,10 @@ func FuzzSign(f *testing.F) {
 	o := SignOptions{Signer: k.signer, Certificate: k.cert, Reserve: 512}
 	f.Add([]byte("%PDF-1.4\n1 0 obj\n<</Type/Catalog>>\nendobj\ntrailer\n<</Root 1 0 R>>\nstartxref\n0\n%%EOF\n"))
 	f.Add([]byte("startxref\n99999999999\n%%EOF"))
+	// A small valid PDF with a signature field, so that the fuzzer starts from
+	// a file the reader accepts and the writer is what it reaches.
+	f.Add(sigFieldFile(f, false))
+	f.Add(sigFieldFile(f, true))
 	f.Fuzz(func(t *testing.T, src []byte) {
 		if len(src) > 1<<16 {
 			t.Skip()
@@ -121,6 +125,38 @@ func FuzzSign(f *testing.F) {
 			t.Fatal("the input is not the start of the signed file")
 		}
 	})
+}
+
+// TestAFileWithNoFormIsGivenTheFirstName: without a form there is nothing to
+// look names up in, and the first one is free.
+func TestAFileWithNoFormIsGivenTheFirstName(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("looked a name up in a form that is not there: %v", r)
+		}
+	}()
+	if got := freeName(nil, false); got != "Signature1" {
+		t.Errorf("the name is %q", got)
+	}
+}
+
+// TestAReserveBeyondTheBoundIsRefused: 1<<62 made twice the reserve negative
+// and strings.Repeat panicked, and 1<<36 asked for 128 GiB. Both are refused,
+// by name, before anything is allocated; the bound itself is allowed.
+func TestAReserveBeyondTheBoundIsRefused(t *testing.T) {
+	for _, reserve := range []int{maxReserve + 1, 1 << 36, 1 << 62} {
+		o := opts(t, "ecdsa")
+		o.Reserve = reserve
+		out, err := signOrFail(t, simple(t, 1), o)
+		if !errors.Is(err, ErrReserveTooLarge) || out != nil {
+			t.Errorf("reserve %d: %v", reserve, err)
+		}
+	}
+	o := opts(t, "ecdsa")
+	o.Reserve = maxReserve
+	if _, err := signOrFail(t, simple(t, 1), o); err != nil {
+		t.Errorf("the largest reserve allowed was refused: %v", err)
+	}
 }
 
 // TestStartxrefAndSectionGuards pins the two readers of the file's tail on both

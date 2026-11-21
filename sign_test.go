@@ -87,7 +87,7 @@ func opts(t testing.TB, kind string) SignOptions {
 
 // sigFieldFile has an empty signature field already, the way a form prepared
 // for signing does, and a text field beside it.
-func sigFieldFile(t *testing.T, packed bool) []byte {
+func sigFieldFile(t testing.TB, packed bool) []byte {
 	t.Helper()
 	return formFile(t, packed, func(w *reader.Writer, page reader.Ref) (reader.Dict, reader.Array) {
 		sig := w.Add(reader.Dict{"FT": reader.Name("Sig"), "T": reader.String("approval"),
@@ -229,7 +229,7 @@ func TestSignedFilesAgreeWithTheOracles(t *testing.T) {
 				vs, raw := pdfsigVerdicts(t, pdfsig, p)
 				shape := len(vs) == 2 && !vs[0].whole && vs[1].whole
 				valid := shape && vs[0].valid && vs[1].valid
-				// ⛔ poppler 26.10 (NSS) calls an Ed25519 CMS signature
+				// ⛔ poppler 26.01 (NSS, as CI runs it; 26.10 locally) calls an Ed25519 CMS signature
 				// "Invalid" while reader/signature and openssl cms -verify
 				// both accept it: recorded, not asserted, so the day poppler
 				// accepts one shows in the table rather than as a failure.
@@ -523,10 +523,12 @@ func TestOptionsThatCannotBeSigned(t *testing.T) {
 // signature itself are separate calls, and either can fail.
 type failingSigner struct {
 	crypto.Signer
-	n int
+	n     int
+	calls int
 }
 
 func (f *failingSigner) Sign(r io.Reader, digest []byte, o crypto.SignerOpts) ([]byte, error) {
+	f.calls++
 	if f.n == 0 {
 		return nil, errors.New("the card was removed")
 	}
@@ -537,15 +539,20 @@ func (f *failingSigner) Sign(r io.Reader, digest []byte, o crypto.SignerOpts) ([
 func TestASignerThatFails(t *testing.T) {
 	for _, n := range []int{0, 1} {
 		o := opts(t, "ecdsa")
-		o.Signer = &failingSigner{Signer: o.Signer, n: n}
+		fs := &failingSigner{Signer: o.Signer, n: n}
+		o.Signer = fs
 		if _, err := Sign(simple(t, 1), o); err == nil {
 			t.Errorf("signed with a signer that failed after %d signatures", n)
+		}
+		// The probe that fails ends it: the card is not asked a second time.
+		if fs.calls != n+1 {
+			t.Errorf("a signer that failed after %d signatures was asked %d times", n, fs.calls)
 		}
 	}
 }
 
 func TestAFileTooLargeForItsByteRange(t *testing.T) {
-	defer func(n int) { maxSignedFile = n }(maxSignedFile)
+	defer func(n int64) { maxSignedFile = n }(maxSignedFile)
 	maxSignedFile = 100
 	if _, err := Sign(simple(t, 1), opts(t, "ecdsa")); err == nil {
 		t.Error("a file larger than its /ByteRange can say was signed")
@@ -617,7 +624,13 @@ func TestAnArrayThatIsNotAnArray(t *testing.T) {
 		t.Error("a form whose /Fields names something that is not an array was signed")
 	}
 	// The same array named twice is changed once, with both additions.
-	s := &signing{written: map[int]reader.Object{7: reader.Array{reader.Integer(1)}}}
+	// A document in which object 7 does not exist, so that only what the update
+	// has written can answer for it.
+	doc, err := reader.Open(simple(t, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &signing{increment: increment{doc: doc}, written: map[int]reader.Object{7: reader.Array{reader.Integer(1)}}}
 	got, err := s.arrayAt(reader.Ref{Num: 7})
 	if err != nil || len(got) != 1 {
 		t.Errorf("%v %v", got, err)
