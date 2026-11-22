@@ -1034,15 +1034,19 @@ pdfops sign -p12 me.p12 -visible 50,50,250,110 contract.pdf signed.pdf
 
 **The password is never an argument or an environment variable**: another
 process can read both. `-p12pass` names a file holding it (one trailing line
-ending is dropped); without it, `pdfops` asks on the terminal with no echo, and
-refuses, saying so, when standard input is not a terminal. `-p12` replaces
+ending is dropped), or is `-` to read it from standard input, up to 4098 bytes
+and with one trailing line ending dropped (`printf %s "$PW" | pdfops sign -p12
+me.p12 -p12pass - in.pdf out.pdf`; refused when standard input is also the PDF
+input); without it, `pdfops` asks on the terminal with no echo, and refuses,
+saying so, when standard input is not a terminal. `-p12` replaces
 `-key` and `-cert`; giving both is refused; `-chain` still adds certificates.
 The empty password is tried before the absent one, as exporters differ. A
 password pkcs12 cannot use at all (not valid UTF-8, over 1024 characters) is
 also `ErrPKCS12Password`, with a message saying so. `pdfops` reads only regular
-files (a FIFO or a device given for any file is refused, not opened), zeroes the
-password buffer after use, and puts the terminal back if Ctrl-C or a kill
-arrives at the prompt. A Go string cannot be erased, so a library caller who
+files (a FIFO or a device given for any file is refused: each is opened without
+waiting and examined once open, so a path swapped for a FIFO in between cannot
+hang it), zeroes the password buffer after use, and puts the terminal back if
+Ctrl-C, Ctrl-\ or a kill arrives at the prompt. A Go string cannot be erased, so a library caller who
 cares should keep the password in a `[]byte`, convert it for the one call, and
 zero it; do not zero the file's bytes, the certificates may point into them.
 

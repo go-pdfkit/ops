@@ -95,7 +95,7 @@ func TestSaveTerminal(t *testing.T) {
 // TestGuardPromptRestoresOnASignal: Ctrl-C and a kill put the terminal back
 // before the process ends, and exit with the shell's code for the signal.
 func TestGuardPromptRestoresOnASignal(t *testing.T) {
-	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143} {
+	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143, syscall.SIGQUIT: 131} {
 		sigs := make(chan os.Signal, 1)
 		restored := make(chan struct{}, 1)
 		exited := make(chan int, 1)
