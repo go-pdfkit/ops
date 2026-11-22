@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -17,8 +18,13 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
+
+	"github.com/go-authn/pkcs12"
+	"golang.org/x/term"
 
 	"github.com/go-pdfkit/ops"
 )
@@ -57,15 +63,34 @@ func parseVisible(s string) ([4]float64, error) {
 	return r, nil
 }
 
+// The file system, replaceable so that a test can make a regular file fail to
+// open or to read, which a directory no longer does (readBounded refuses one
+// before opening it).
+var (
+	openFile = os.Open
+	readAll  = io.ReadAll
+)
+
 // readBounded reads a file, refusing one longer than max rather than reading it
-// whole first.
+// whole first. Only a regular file is read: opening a FIFO would wait for a
+// writer for ever, and a device (/dev/zero) has no end to be refused at.
 func readBounded(path string, max int64) ([]byte, error) {
-	f, err := os.Open(path)
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if st.IsDir() {
+		return nil, fmt.Errorf("%s is a directory", path)
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file (%s)", path, st.Mode().Type())
+	}
+	f, err := openFile(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	b, err := readAll(io.LimitReader(f, max+1))
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +154,120 @@ func parsePrivateKey(data []byte) (crypto.Signer, error) {
 	}
 }
 
+// maxPasswordFile bounds a password file: pkcs12 refuses a password over 1024
+// characters, and each takes at most four bytes.
+const maxPasswordFile = 4096 + 2
+
+// askPassword reads the password with no echo, from the terminal on standard
+// input. A variable so that a test can answer without one.
+var askPassword = func(prompt string, errOut io.Writer) ([]byte, error) {
+	if !stdinIsTerminal() {
+		return nil, errors.New("the .p12 password is asked for on a terminal and standard input is not one; put it in a file and pass -p12pass <file>")
+	}
+	fmt.Fprint(errOut, prompt)
+	// term.ReadPassword turns echo off and back on when it returns, but a
+	// Ctrl-C (or a kill) ends the process in between and would leave the
+	// person's shell typing blind: put the terminal back first.
+	if restore, err := saveTerminal(int(os.Stdin.Fd())); err == nil {
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+		defer guardPrompt(restore, sigs, osExit)()
+		defer signal.Stop(sigs)
+	}
+	b, err := readSecret()
+	fmt.Fprintln(errOut)
+	return b, err
+}
+
+// The terminal itself, replaceable so that a test needs none.
+var (
+	stdinIsTerminal = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+	readSecret      = func() ([]byte, error) { return term.ReadPassword(int(os.Stdin.Fd())) }
+	getState        = term.GetState
+	restoreState    = term.Restore
+)
+
+// saveTerminal remembers the state of the terminal on fd and returns what puts
+// it back.
+func saveTerminal(fd int) (restore func(), err error) {
+	st, err := getState(fd)
+	if err != nil {
+		return nil, err
+	}
+	return func() { _ = restoreState(fd, st) }, nil
+}
+
+// guardPrompt waits for a signal while the prompt is open: on one it restores
+// the terminal, ends a line, and exits with the shell's code for it (128+n,
+// 130 for Ctrl-C). The function it returns ends the wait, without a signal,
+// and returns once the guard has stopped.
+func guardPrompt(restore func(), sigs <-chan os.Signal, exit func(int)) (stop func()) {
+	done, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		select {
+		case s := <-sigs:
+			restore()
+			fmt.Fprintln(os.Stderr)
+			code := 130
+			if s == syscall.SIGTERM {
+				code = 143
+			}
+			exit(code)
+		case <-done:
+		}
+	}()
+	return func() { close(done); <-stopped }
+}
+
+// p12Password reads the password from a file (one trailing line ending is not
+// part of it), or asks for it. It never comes from an argument or from the
+// environment, where other processes can read it. The caller zeroes the bytes
+// when it is done.
+func p12Password(c *context, file string) ([]byte, error) {
+	if file == "" {
+		return askPassword("password for the .p12: ", c.errOut)
+	}
+	b, err := readBounded(file, maxPasswordFile)
+	if err != nil {
+		return nil, err
+	}
+	b = bytes.TrimSuffix(b, []byte("\n"))
+	return bytes.TrimSuffix(b, []byte("\r")), nil
+}
+
+// loadP12 fills in the signer, certificate and chain from a .p12 file, saying
+// what is wrong in words that tell a person what to do.
+func loadP12(c *context, o *ops.SignOptions, file, passFile string) error {
+	data, err := readBounded(file, ops.MaxPKCS12Size)
+	if err != nil {
+		return fmt.Errorf("%w (a .p12 is a few kilobytes: is it the right file?)", err)
+	}
+	pass, err := p12Password(c, passFile)
+	if err != nil {
+		return err
+	}
+	// Best effort: the string made for the call cannot be erased, but the
+	// buffer read from the file or the terminal can. The file's bytes are
+	// left alone: a parsed certificate may point into them, and they are the
+	// file as it sits on disk, still encrypted.
+	defer clear(pass)
+	err = o.LoadPKCS12(data, string(pass))
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, pkcs12.ErrPassword):
+		return fmt.Errorf("%s: the password cannot be used: it must be valid UTF-8 and at most 1024 characters", file)
+	case errors.Is(err, ops.ErrPKCS12Password):
+		return fmt.Errorf("%s: wrong password (or the file was damaged: the format cannot tell the two apart)", file)
+	case errors.Is(err, ops.ErrPKCS12Unsupported):
+		return fmt.Errorf("%s: not supported: %v; re-export it with a current OpenSSL (AES, SHA-256 MAC) and an RSA, ECDSA or Ed25519 key", file, err)
+	case errors.Is(err, ops.ErrPKCS12TooLarge):
+		return fmt.Errorf("%s: refused as too large or too costly to open: %v", file, err)
+	}
+	return fmt.Errorf("%s: %w", file, err)
+}
+
 var hashNames = map[string]crypto.Hash{
 	"": 0, "sha256": crypto.SHA256, "sha384": crypto.SHA384, "sha512": crypto.SHA512,
 }
@@ -139,6 +278,8 @@ func runSign(c *context, args []string) error {
 	fs := flags("sign")
 	keyFile := fs.String("key", "", "the private key, PEM: RSA, ECDSA or Ed25519")
 	certFile := fs.String("cert", "", "the signer's certificate, PEM")
+	p12File := fs.String("p12", "", "a .p12 / .pfx file holding the key, certificate and chain, instead of -key and -cert")
+	p12Pass := fs.String("p12pass", "", "a FILE holding the .p12 password; without it the password is asked for on the terminal, never taken from the command line or the environment")
 	chainFile := fs.String("chain", "", "further certificates to embed, PEM")
 	field := fs.String("field", "", "the signature field to fill, or the name of a new invisible one")
 	page := fs.Int("page", 0, "the page a new field goes on; 0 means the first")
@@ -159,8 +300,13 @@ func runSign(c *context, args []string) error {
 	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
 		return err
 	}
-	if *keyFile == "" || *certFile == "" {
-		return errors.New("sign needs -key and -cert")
+	switch {
+	case *p12File != "" && (*keyFile != "" || *certFile != ""):
+		return errors.New("sign takes -p12 or -key and -cert, not both")
+	case *p12File == "" && *p12Pass != "":
+		return errors.New("-p12pass goes with -p12")
+	case *p12File == "" && (*keyFile == "" || *certFile == ""):
+		return errors.New("sign needs -key and -cert, or -p12")
 	}
 	o := ops.SignOptions{
 		Field: *field, Page: *page, Reason: *reason, Location: *location,
@@ -194,23 +340,29 @@ func runSign(c *context, args []string) error {
 		}
 	}
 
-	keyPEM, err := readBounded(*keyFile, maxCredentialFile)
-	if err != nil {
-		return err
+	if *p12File != "" {
+		if err := loadP12(c, &o, *p12File, *p12Pass); err != nil {
+			return err
+		}
+	} else {
+		keyPEM, err := readBounded(*keyFile, maxCredentialFile)
+		if err != nil {
+			return err
+		}
+		if o.Signer, err = parsePrivateKey(keyPEM); err != nil {
+			return fmt.Errorf("%s: %w", *keyFile, err)
+		}
+		certPEM, err := readBounded(*certFile, maxCredentialFile)
+		if err != nil {
+			return err
+		}
+		certs, err := parseCertificates(certPEM)
+		if err != nil {
+			return fmt.Errorf("%s: %w", *certFile, err)
+		}
+		o.Certificate = certs[0]
+		o.Chain = certs[1:]
 	}
-	if o.Signer, err = parsePrivateKey(keyPEM); err != nil {
-		return fmt.Errorf("%s: %w", *keyFile, err)
-	}
-	certPEM, err := readBounded(*certFile, maxCredentialFile)
-	if err != nil {
-		return err
-	}
-	certs, err := parseCertificates(certPEM)
-	if err != nil {
-		return fmt.Errorf("%s: %w", *certFile, err)
-	}
-	o.Certificate = certs[0]
-	o.Chain = certs[1:]
 	if *chainFile != "" {
 		chainPEM, err := readBounded(*chainFile, maxCredentialFile)
 		if err != nil {

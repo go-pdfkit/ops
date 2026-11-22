@@ -4,6 +4,7 @@ go 1.27.4
 
 require (
 	github.com/go-authn/cms v0.2.0
+	github.com/go-authn/pkcs12 v0.1.0
 	github.com/go-gfx/gfx v0.41.0
 	github.com/go-images/images v0.3.0
 	github.com/go-images/jpeg v0.3.0
@@ -18,6 +19,7 @@ require (
 	github.com/go-pdfkit/xfa v0.22.0
 	github.com/go-richdoc/markdown v0.13.0
 	github.com/go-richdoc/richdoc v0.10.0
+	golang.org/x/term v0.48.0
 )
 
 require (
@@ -43,7 +45,7 @@ require (
 	github.com/go-webengine/esbuildsandbox v0.1.0 // indirect
 	github.com/go-widgets/painter v0.16.0 // indirect
 	github.com/google/pprof v0.0.0-20240727154555-813a5fbdbec8 // indirect
-	github.com/klauspost/compress v1.18.7 // indirect
+	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
@@ -51,6 +53,6 @@ require (
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/image v0.47.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )
