@@ -997,6 +997,48 @@ pdfops sign -key key.pem -cert cert.pem -reason "I agree" contract.pdf signed.pd
 pdfops sign -key key.pem -cert cert.pem -chain ca.pem -field approval -subfilter cades form.pdf signed.pdf
 ```
 
+### Signing with a .p12 / .pfx file
+
+A certificate export from Windows, macOS, Firefox or a certificate authority is
+one password-protected PKCS #12 file (RFC 7292) holding the key, the
+certificate and its chain. `SignOptions.LoadPKCS12` reads it with
+[go-authn/pkcs12](https://github.com/go-authn/pkcs12) and sets `Signer`,
+`Certificate` and `Chain`; nothing else of the options changes, and nothing
+is kept:
+
+```go
+var o ops.SignOptions
+if err := o.LoadPKCS12(p12, password); err != nil {
+	// errors.Is: ErrPKCS12Password, ErrPKCS12Unsupported,
+	//            ErrPKCS12TooLarge, ErrPKCS12Malformed
+}
+o.Reason = "I agree"
+signed, err := ops.Sign(pdf, o)
+```
+
+A wrong password and a damaged file are one answer
+(`ErrPKCS12Password`): the format's MAC cannot tell them apart. An algorithm or
+key this cannot read, a file with no MAC, and an X25519 key (it cannot sign) are
+`ErrPKCS12Unsupported`; a RSA key without CRT values is one of them. Each error
+also wraps go-authn/pkcs12's own, so `errors.Is` answers for either.
+`ErrPKCS12TooLarge` covers every bound of go-authn/pkcs12: `MaxPKCS12Size`
+(8 MiB, the file; check it before reading, as the command does), 1 000 000
+iterations per derivation, 32 KiB per certificate, an RSA modulus of 8192 bits.
+A decode allocates up to about 25 MB for a hostile file, so a service should cap
+the decodes in flight.
+
+```
+pdfops sign -p12 me.p12 -p12pass me.pass -reason "I agree" contract.pdf signed.pdf
+pdfops sign -p12 me.p12 -visible 50,50,250,110 contract.pdf signed.pdf
+```
+
+**The password is never an argument or an environment variable**: another
+process can read both. `-p12pass` names a file holding it (one trailing line
+ending is dropped); without it, `pdfops` asks on the terminal with no echo, and
+refuses, saying so, when standard input is not a terminal. `-p12` replaces
+`-key` and `-cert`; giving both is refused; `-chain` still adds certificates.
+The empty password is tried before the absent one, as exporters differ.
+
 ### A visible signature
 
 `SignOptions.Appearance` gives the signature a box on its page. `nil` (the
