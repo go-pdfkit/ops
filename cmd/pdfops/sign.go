@@ -67,15 +67,25 @@ func parseVisible(s string) ([4]float64, error) {
 // open or to read, which a directory no longer does (readBounded refuses one
 // before opening it).
 var (
-	openFile = os.Open
+	openFile = openNoBlock
 	readAll  = io.ReadAll
+	// passStdin is where -p12pass - reads the password from.
+	passStdin io.Reader = os.Stdin
 )
 
 // readBounded reads a file, refusing one longer than max rather than reading it
 // whole first. Only a regular file is read: opening a FIFO would wait for a
-// writer for ever, and a device (/dev/zero) has no end to be refused at.
+// writer for ever, and a device (/dev/zero) has no end to be refused at. The
+// file is looked at AFTER it is opened, and opened without waiting: a path that
+// was a regular file a moment ago may have been swapped for a FIFO, and only
+// what was actually opened can be trusted.
 func readBounded(path string, max int64) ([]byte, error) {
-	st, err := os.Stat(path)
+	f, err := openFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
@@ -85,11 +95,6 @@ func readBounded(path string, max int64) ([]byte, error) {
 	if !st.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file (%s)", path, st.Mode().Type())
 	}
-	f, err := openFile(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
 	b, err := readAll(io.LimitReader(f, max+1))
 	if err != nil {
 		return nil, err
@@ -162,7 +167,7 @@ const maxPasswordFile = 4096 + 2
 // input. A variable so that a test can answer without one.
 var askPassword = func(prompt string, errOut io.Writer) ([]byte, error) {
 	if !stdinIsTerminal() {
-		return nil, errors.New("the .p12 password is asked for on a terminal and standard input is not one; put it in a file and pass -p12pass <file>")
+		return nil, errors.New("the .p12 password is asked for on a terminal and standard input is not one; pass -p12pass <file>, or -p12pass - to read it from standard input")
 	}
 	fmt.Fprint(errOut, prompt)
 	// term.ReadPassword turns echo off and back on when it returns, but a
@@ -170,7 +175,7 @@ var askPassword = func(prompt string, errOut io.Writer) ([]byte, error) {
 	// person's shell typing blind: put the terminal back first.
 	if restore, err := saveTerminal(int(os.Stdin.Fd())); err == nil {
 		sigs := make(chan os.Signal, 1)
-		signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+		signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 		defer guardPrompt(restore, sigs, osExit)()
 		defer signal.Stop(sigs)
 	}
@@ -210,8 +215,11 @@ func guardPrompt(restore func(), sigs <-chan os.Signal, exit func(int)) (stop fu
 			restore()
 			fmt.Fprintln(os.Stderr)
 			code := 130
-			if s == syscall.SIGTERM {
+			switch s {
+			case syscall.SIGTERM:
 				code = 143
+			case syscall.SIGQUIT:
+				code = 131
 			}
 			exit(code)
 		case <-done:
@@ -228,7 +236,16 @@ func p12Password(c *context, file string) ([]byte, error) {
 	if file == "" {
 		return askPassword("password for the .p12: ", c.errOut)
 	}
-	b, err := readBounded(file, maxPasswordFile)
+	var b []byte
+	var err error
+	if file == "-" {
+		b, err = readAll(io.LimitReader(passStdin, maxPasswordFile+1))
+		if err == nil && len(b) > maxPasswordFile {
+			err = fmt.Errorf("the password on standard input is longer than the %d bytes this reads", maxPasswordFile)
+		}
+	} else {
+		b, err = readBounded(file, maxPasswordFile)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +296,7 @@ func runSign(c *context, args []string) error {
 	keyFile := fs.String("key", "", "the private key, PEM: RSA, ECDSA or Ed25519")
 	certFile := fs.String("cert", "", "the signer's certificate, PEM")
 	p12File := fs.String("p12", "", "a .p12 / .pfx file holding the key, certificate and chain, instead of -key and -cert")
-	p12Pass := fs.String("p12pass", "", "a FILE holding the .p12 password; without it the password is asked for on the terminal, never taken from the command line or the environment")
+	p12Pass := fs.String("p12pass", "", "a FILE holding the .p12 password, or - for standard input; without it the password is asked for on the terminal, never taken from the command line or the environment")
 	chainFile := fs.String("chain", "", "further certificates to embed, PEM")
 	field := fs.String("field", "", "the signature field to fill, or the name of a new invisible one")
 	page := fs.Int("page", 0, "the page a new field goes on; 0 means the first")
@@ -307,6 +324,8 @@ func runSign(c *context, args []string) error {
 		return errors.New("-p12pass goes with -p12")
 	case *p12File == "" && (*keyFile == "" || *certFile == ""):
 		return errors.New("sign needs -key and -cert, or -p12")
+	case *p12Pass == "-" && (fs.Arg(0) == "-" || fs.Arg(0) == "/dev/stdin"):
+		return errors.New("-p12pass - reads the password from standard input, which the PDF input cannot also be")
 	}
 	o := ops.SignOptions{
 		Field: *field, Page: *page, Reason: *reason, Location: *location,

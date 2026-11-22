@@ -59,28 +59,33 @@ func TestACtrlCAtThePromptRestoresTheTerminal(t *testing.T) {
 	defer func(a func() bool, b func() ([]byte, error), c func(int) (*term.State, error), d func(int, *term.State) error, e func(int)) {
 		stdinIsTerminal, readSecret, getState, restoreState, osExit = a, b, c, d, e
 	}(stdinIsTerminal, readSecret, getState, restoreState, osExit)
-	restored := make(chan struct{}, 1)
-	exited := make(chan int, 1)
-	stdinIsTerminal = func() bool { return true }
-	getState = func(int) (*term.State, error) { return &term.State{}, nil }
-	restoreState = func(int, *term.State) error { restored <- struct{}{}; return nil }
-	osExit = func(c int) { exited <- c }
-	readSecret = func() ([]byte, error) {
-		if err := syscall.Kill(syscall.Getpid(), syscall.SIGINT); err != nil {
-			t.Error(err)
+	for sig, want := range map[syscall.Signal]int{syscall.SIGINT: 130, syscall.SIGQUIT: 131} {
+		restored := make(chan struct{}, 1)
+		exited := make(chan int, 1)
+		stdinIsTerminal = func() bool { return true }
+		getState = func(int) (*term.State, error) { return &term.State{}, nil }
+		restoreState = func(int, *term.State) error { restored <- struct{}{}; return nil }
+		osExit = func(c int) { exited <- c }
+		readSecret = func() ([]byte, error) {
+			if err := syscall.Kill(syscall.Getpid(), sig); err != nil {
+				t.Error(err)
+			}
+			select {
+			case c := <-exited:
+				if c != want {
+					t.Errorf("%v: exit %d, want %d", sig, c, want)
+				}
+			case <-time.After(10 * time.Second):
+				t.Errorf("no exit after %v", sig)
+			}
+			return nil, nil
 		}
-		select {
-		case <-exited:
-		case <-time.After(10 * time.Second):
-			t.Error("no exit after SIGINT")
+		var errOut bytes.Buffer
+		if _, err := askPassword("p: ", &errOut); err != nil {
+			t.Fatal(err)
 		}
-		return nil, nil
-	}
-	var errOut bytes.Buffer
-	if _, err := askPassword("p: ", &errOut); err != nil {
-		t.Fatal(err)
-	}
-	if len(restored) != 1 {
-		t.Error("the terminal was not restored")
+		if len(restored) != 1 {
+			t.Errorf("%v: the terminal was not restored", sig)
+		}
 	}
 }
