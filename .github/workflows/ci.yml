@@ -74,6 +74,14 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # A known vulnerability in a package this module REACHES fails the lane
+      # (govulncheck reports only reachable ones as findings). The first run
+      # found GO-2026-6865 in klauspost/compress v1.18.7, fixed in v1.20.2.
+      - name: govulncheck
+        run: |
+          GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
       - name: Test with coverage
         env:
           PDFSIG_REQUIRE: "1"

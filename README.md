@@ -1037,7 +1037,19 @@ process can read both. `-p12pass` names a file holding it (one trailing line
 ending is dropped); without it, `pdfops` asks on the terminal with no echo, and
 refuses, saying so, when standard input is not a terminal. `-p12` replaces
 `-key` and `-cert`; giving both is refused; `-chain` still adds certificates.
-The empty password is tried before the absent one, as exporters differ.
+The empty password is tried before the absent one, as exporters differ. A
+password pkcs12 cannot use at all (not valid UTF-8, over 1024 characters) is
+also `ErrPKCS12Password`, with a message saying so. `pdfops` reads only regular
+files (a FIFO or a device given for any file is refused, not opened), zeroes the
+password buffer after use, and puts the terminal back if Ctrl-C or a kill
+arrives at the prompt. A Go string cannot be erased, so a library caller who
+cares should keep the password in a `[]byte`, convert it for the one call, and
+zero it; do not zero the file's bytes, the certificates may point into them.
+
+**The certificate is not judged.** `LoadPKCS12` does not check its validity
+dates, its key usage or extended key usage, or its chain to a root: it loads a
+key, a certificate and the certificates beside it. The caller decides whether
+to sign with it, and the verifier decides whether to trust the result.
 
 ### A visible signature
 

@@ -77,11 +77,12 @@ func TestSignVerbWithAP12(t *testing.T) {
 }
 
 func TestSignVerbAsksForThePassword(t *testing.T) {
-	defer func(f func(string, io.Writer) (string, error)) { askPassword = f }(askPassword)
+	defer func(f func(string, io.Writer) ([]byte, error)) { askPassword = f }(askPassword)
 	var asked string
-	askPassword = func(prompt string, _ io.Writer) (string, error) {
+	typed := []byte(fixturePassword)
+	askPassword = func(prompt string, _ io.Writer) ([]byte, error) {
 		asked = prompt
-		return fixturePassword, nil
+		return typed, nil
 	}
 	out := filepath.Join(t.TempDir(), "out.pdf")
 	if code, _, msg := exec("sign", "-p12", p12Path(t, "ec.p12"), fixture(t, 1), out); code != 0 {
@@ -91,8 +92,11 @@ func TestSignVerbAsksForThePassword(t *testing.T) {
 		t.Errorf("the prompt was %q", asked)
 	}
 	verifiedOnce(t, out)
+	if !bytes.Equal(typed, make([]byte, len(typed))) {
+		t.Errorf("the typed password was left in its buffer: %q", typed)
+	}
 
-	askPassword = func(string, io.Writer) (string, error) { return "", errors.New("the terminal went away") }
+	askPassword = func(string, io.Writer) ([]byte, error) { return nil, errors.New("the terminal went away") }
 	if code, _, msg := exec("sign", "-p12", p12Path(t, "ec.p12"), fixture(t, 1), out); code == 0 || !strings.Contains(msg, "terminal went away") {
 		t.Errorf("a failed prompt: code %d %q", code, msg)
 	}
@@ -107,7 +111,7 @@ func TestThePromptReadsWithoutEcho(t *testing.T) {
 	readSecret = func() ([]byte, error) { return []byte("typed"), nil }
 	var errOut bytes.Buffer
 	got, err := askPassword("p: ", &errOut)
-	if err != nil || got != "typed" || errOut.String() != "p: \n" {
+	if err != nil || string(got) != "typed" || errOut.String() != "p: \n" {
 		t.Errorf("%q %v %q", got, err, errOut.String())
 	}
 	readSecret = func() ([]byte, error) { return nil, errors.New("interrupted") }

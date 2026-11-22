@@ -83,6 +83,10 @@ func TestLoadPKCS12Refusals(t *testing.T) {
 	}{
 		{"wrong password", p12File(t, "rsa-chain.p12"), "not the password", ErrPKCS12Password, pkcs12.ErrIncorrectPassword},
 		{"empty password", p12File(t, "ec.p12"), "", ErrPKCS12Password, pkcs12.ErrIncorrectPassword},
+		// A password pkcs12 cannot use at all (not UTF-8, over 1024 characters) is
+		// still a password problem, not a damaged file.
+		{"password not UTF-8", p12File(t, "ec.p12"), "\xff\xfe\xfd", ErrPKCS12Password, pkcs12.ErrPassword},
+		{"password too long", p12File(t, "ec.p12"), strings.Repeat("a", 1025), ErrPKCS12Password, pkcs12.ErrPassword},
 		{"oversized", big, p12Password, ErrPKCS12TooLarge, pkcs12.ErrLimit},
 		// 2 000 000 key-derivation iterations, over the 1 000 000 bound: refused
 		// before any hashing.
