@@ -238,6 +238,10 @@ func p12Password(c *context, file string) ([]byte, error) {
 	}
 	var b []byte
 	var err error
+	if file == "-" && stdinIsTerminal() {
+		// A terminal is not a pipe: reading it plainly would echo the password.
+		return askPassword("password for the .p12: ", c.errOut)
+	}
 	if file == "-" {
 		b, err = readAll(io.LimitReader(passStdin, maxPasswordFile+1))
 		if err == nil && len(b) > maxPasswordFile {

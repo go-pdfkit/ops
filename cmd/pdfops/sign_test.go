@@ -300,3 +300,21 @@ func TestPEMReadersRefuseWithoutCrashing(t *testing.T) {
 		t.Errorf("a public key: %v", keyErr)
 	}
 }
+
+// TestParseCertificatesSkipsOtherBlocks: only CERTIFICATE blocks are read; a
+// block of another type in front (a key, say) is skipped, not parsed as one.
+func TestParseCertificatesSkipsOtherBlocks(t *testing.T) {
+	_, certPath := credentials(t, t.TempDir(), "ecdsa")
+	cert, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := append(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte{1, 2, 3}}), cert...)
+	certs, err := parseCertificates(data)
+	if err != nil || len(certs) != 1 {
+		t.Fatalf("got %d certificates, err %v; want 1, nil", len(certs), err)
+	}
+	if _, err := parseCertificates(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte{1}})); err == nil {
+		t.Error("a file with no certificate block was accepted")
+	}
+}
