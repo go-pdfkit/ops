@@ -1037,7 +1037,8 @@ process can read both. `-p12pass` names a file holding it (one trailing line
 ending is dropped), or is `-` to read it from standard input, up to 4098 bytes
 and with one trailing line ending dropped (`printf %s "$PW" | pdfops sign -p12
 me.p12 -p12pass - in.pdf out.pdf`; refused when standard input is also the PDF
-input); without it, `pdfops` asks on the terminal with no echo, and refuses,
+input; when standard input is a terminal, `-p12pass -` gets the same no-echo
+prompt as omitting it); without it, `pdfops` asks on the terminal with no echo, and refuses,
 saying so, when standard input is not a terminal. `-p12` replaces
 `-key` and `-cert`; giving both is refused; `-chain` still adds certificates.
 The empty password is tried before the absent one, as exporters differ. A

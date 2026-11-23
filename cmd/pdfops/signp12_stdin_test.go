@@ -114,3 +114,45 @@ func TestReadBoundedLooksAtWhatItOpened(t *testing.T) {
 		t.Errorf("a device that replaced the file: %v", err)
 	}
 }
+
+// TestStandardInputPasswordOnATerminalIsNotEchoed: -p12pass - with a terminal on
+// standard input goes through the no-echo prompt (readSecret), never the plain
+// bounded read; with a pipe it stays the bounded read and never prompts.
+func TestStandardInputPasswordOnATerminalIsNotEchoed(t *testing.T) {
+	defer func(a func() bool, b func() ([]byte, error)) { stdinIsTerminal, readSecret = a, b }(stdinIsTerminal, readSecret)
+	in := fixture(t, 1)
+	prompted := 0
+	readSecret = func() ([]byte, error) { prompted++; return []byte(fixturePassword), nil }
+
+	// Terminal: the plain read must not be touched.
+	stdinIsTerminal = func() bool { return true }
+	withStdin(t, errReader{})
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, msg := exec("sign", "-p12", p12Path(t, "ec.p12"), "-p12pass", "-", in, out); code != 0 {
+		t.Fatalf("terminal: code %d: %s", code, msg)
+	}
+	if prompted != 1 {
+		t.Errorf("terminal: readSecret called %d times, want 1", prompted)
+	}
+
+	// Pipe: bounded read, no prompt.
+	stdinIsTerminal = func() bool { return false }
+	prompted = 0
+	withStdin(t, strings.NewReader(fixturePassword+"\n"))
+	out = filepath.Join(t.TempDir(), "out2.pdf")
+	if code, _, msg := exec("sign", "-p12", p12Path(t, "ec.p12"), "-p12pass", "-", in, out); code != 0 {
+		t.Fatalf("pipe: code %d: %s", code, msg)
+	}
+	if prompted != 0 {
+		t.Errorf("pipe: readSecret called %d times, want 0", prompted)
+	}
+	withStdin(t, strings.NewReader(strings.Repeat("a", maxPasswordFile+1)))
+	if code, _, msg := exec("sign", "-p12", p12Path(t, "ec.p12"), "-p12pass", "-", in, out); code == 0 || !strings.Contains(msg, "longer than the 4098 bytes") {
+		t.Errorf("pipe over the bound: code %d: %q", code, msg)
+	}
+}
+
+// errReader fails any read: a terminal path that touched it would show.
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("plain read of a terminal") }
