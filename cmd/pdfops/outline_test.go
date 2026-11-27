@@ -121,3 +121,14 @@ func TestOutlineTextSaysWhatItDidNotReach(t *testing.T) {
 		t.Errorf("a plain document said %q", said)
 	}
 }
+
+func TestOutlineTextSaysWhichArgumentIsWrong(t *testing.T) {
+	in := outlineFixture(t)
+	out := filepath.Join(t.TempDir(), "out.pdf")
+	if code, _, msg := exec("outlinetext", in); code != 1 || !strings.Contains(msg, "<in.pdf> <out.pdf>") {
+		t.Errorf("one argument: code %d, %q", code, msg)
+	}
+	if code, _, msg := exec("outlinetext", "/no/such/file.pdf", out); code != 1 || !strings.Contains(msg, "/no/such/file.pdf") {
+		t.Errorf("missing input: code %d, %q", code, msg)
+	}
+}

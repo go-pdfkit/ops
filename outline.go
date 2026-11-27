@@ -314,10 +314,7 @@ func (o *outliner) annotationsWithFonts(page reader.Dict) int {
 }
 
 func resolveObj(d *reader.Document, o reader.Object) reader.Object {
-	v, err := d.Resolve(o)
-	if err != nil {
-		return reader.Null{}
-	}
+	v, _ := d.Resolve(o) // an unresolvable reference is nil, which is no stream, dictionary or name
 	return v
 }
 
@@ -373,16 +370,15 @@ func numbers(ops []reader.Object, n int) ([]float64, bool) {
 }
 
 func (c *textRun) font(name reader.Name) *render.GlyphFont {
-	if f, ok := c.fonts[name]; ok {
-		return f
-	}
-	var f *render.GlyphFont
-	if fonts, ok := c.o.src.GetDict(c.res, "Font"); ok {
-		if entry, has := fonts[name]; has {
-			f, _ = c.o.ol.Font(entry)
+	f, loaded := c.fonts[name]
+	if !loaded { // a direct font dictionary is loaded again each time it is named
+		if fonts, ok := c.o.src.GetDict(c.res, "Font"); ok {
+			if entry, has := fonts[name]; has {
+				f, _ = c.o.ol.Font(entry)
+			}
 		}
+		c.fonts[name] = f
 	}
-	c.fonts[name] = f
 	return f
 }
 
