@@ -661,7 +661,24 @@ Limits, stated rather than hidden: vertical writing is refused; embolden
 **not** reached and are counted (`pdfops` prints how many); text state a form
 inherits from the page is not followed; a page cannot be outlined and
 recoloured, redacted or text-edited in the same pass. The work is bounded
-(glyph count, output bytes, form nesting) and a bound refuses, never truncates.
+(glyph count, output bytes, form nesting, `q` depth, marked-content depth, the
+size of a resource dictionary) and a bound refuses, never truncates: `Bytes`
+returns `ErrOutlineTooLarge` (or `ErrOutlineVertical`) and writes nothing.
+
+⛔ **Outlined text is no longer searchable, and neither are its descriptions.**
+Marked content that gives text in words in place of what is drawn
+(`/ActualText`, `/Alt`, `/E`) would let a reader select and search the very
+words that were turned into shapes, so on an outlined page those entries are
+removed from the marked-content property lists, whether they are written inline
+or held as objects, and from the structure elements whose content is on such a
+page (an element with no page, and nothing in it, goes when any page is
+outlined). Everything that is not words (`/MCID`, `/Lang`, the structure
+itself) stays, so a tagged document stays tagged.
+
+Text that outlining does not reach is **counted, not hidden**: `pdfops` prints
+how many annotations still hold text (a nested form, a FreeText or any
+annotation's `/Contents`, a form field's value, including one inherited from
+its parent field), and `Doc.OutlineSkipped` returns the number.
 
 Both the filling **and** the stroking colour are set, because text has render
 modes: 0 fills, 1 strokes, 2 does both.
