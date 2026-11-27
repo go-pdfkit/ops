@@ -79,6 +79,10 @@ type structRebuild struct {
 	at map[int]builtPage
 	// order is the source page numbers in the order they were written.
 	order []int
+	// outlinedMarks counts the marks recorded so far that lie on a page whose
+	// text was written as paths, so that an element can tell whether any of its
+	// own content, however deep, is on one.
+	outlinedMarks int
 
 	// marks[page][mark] is the element that owns one mark on one page.
 	marks map[int]map[int64]reader.Ref
@@ -212,6 +216,7 @@ func (s *structRebuild) element(o reader.Object, parent reader.Ref, page, depth 
 	// The element is given its number before its children are rebuilt, since
 	// each of them has to point back at it.
 	ref := s.w.Reserve()
+	before := s.outlinedMarks
 	kids, had, at := s.children(elem, ref, page, depth)
 	if len(kids) == 0 && (had > 0 || page == pageGone) {
 		// An element whose children have all gone describes nothing. One that
@@ -223,11 +228,15 @@ func (s *structRebuild) element(o reader.Object, parent reader.Ref, page, depth 
 	// What an element says of its own content in words (/ActualText, /Alt, /E)
 	// is text a reader selects and searches in place of what is drawn: where the
 	// page it is on has had its text written as paths, it is not carried across.
+	// That holds where its own page is outlined, where any mark under it is on a
+	// page that is, and, for an element that names no page and holds nothing
+	// (so that nothing says where its words would be read), wherever any page is.
 	onPage := page
 	if onPage <= 0 {
 		onPage = at
 	}
-	outlined := s.at[onPage].outlined
+	outlined := s.at[onPage].outlined || s.outlinedMarks > before ||
+		(onPage <= 0 && len(kids) == 0 && s.anyOutlined())
 	out := reader.Dict{}
 	for k, v := range elem {
 		if structKeysRebuilt[k] || (outlined && slices.Contains(markedText, k)) {
@@ -351,6 +360,7 @@ func (s *structRebuild) mark(n int64, parent reader.Ref, page int) (reader.Objec
 	// number tree can only name one of them; the later one is taken, which is
 	// what a reader reading the file in order would have been left with.
 	at[n] = parent
+	s.noteMark(page)
 	return reader.Integer(n), page, true
 }
 
@@ -413,12 +423,31 @@ func (s *structRebuild) streamMark(stm reader.Object, n int64, parent reader.Ref
 		s.streams[key] = at
 	}
 	at[n] = parent
+	s.noteMark(page)
 	out := reader.Dict{"Type": reader.Name("MCR"), "MCID": reader.Integer(n),
 		"Stm": s.w.Copy(s.src, ref)}
 	if named {
 		out["Pg"] = s.at[page].ref
 	}
 	return out, page, true
+}
+
+// noteMark records that a mark was filed on a page, and whether that page has
+// had its text written as paths.
+func (s *structRebuild) noteMark(page int) {
+	if s.at[page].outlined {
+		s.outlinedMarks++
+	}
+}
+
+// anyOutlined reports whether any page kept has had its text written as paths.
+func (s *structRebuild) anyOutlined() bool {
+	for _, p := range s.at {
+		if p.outlined {
+			return true
+		}
+	}
+	return false
 }
 
 // reaches reports whether a page draws the object with the given number: its
