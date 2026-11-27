@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/go-pdfkit/reader"
@@ -64,6 +65,7 @@ func (d *Doc) Bytes() ([]byte, error) {
 		}
 	}
 	d.redactErr = nil
+	d.outliners, d.outlineRes, d.outlineSkipped = nil, nil, 0
 	for i, p := range d.pages {
 		dicts[i] = d.buildPage(w, p, pagesRef, where, kept)
 	}
@@ -236,6 +238,22 @@ func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, whe
 	// told. A branch would be an arm no test could reach.
 	imgs, _ := d.plannedImages(&p, p.redactions)
 
+	// The text of a page to be outlined is rewritten here, with its resources:
+	// the fonts are not carried over, and a Type 3 glyph becomes a form that
+	// has to be put in them. A failure is recorded like a redaction's, and for
+	// the same reason: a page still holding its text is not what was asked for.
+	d.outlineRes = nil
+	if p.outline && err == nil {
+		var oerr error
+		out, d.outlineRes, oerr = d.outlinedPage(w, p, src)
+		if oerr != nil {
+			d.redactErr, rewritten = errors.Join(d.redactErr, oerr), false
+			d.outlineRes = nil
+		} else {
+			rewritten = true
+		}
+	}
+
 	copied := reader.Dict{}
 	for k, v := range src {
 		if rebuiltPageKeys[k] || (d.sanitize && sanitisedPageKeys[k]) {
@@ -244,12 +262,12 @@ func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, whe
 		if k == "Contents" && rewritten {
 			continue // its replacement is added below; copying it would orphan it
 		}
-		if k == "Resources" && len(imgs) > 0 {
+		if k == "Resources" && (len(imgs) > 0 || d.outlineRes != nil) {
 			continue // rebuilt below, with the blanked pictures in place
 		}
 		copied[k] = w.Copy(p.src, v)
 	}
-	if len(imgs) > 0 {
+	if len(imgs) > 0 || d.outlineRes != nil {
 		copied["Resources"] = d.borrowedResources(w, p, src, imgs)
 	}
 	if rewritten {
@@ -375,6 +393,9 @@ func (d *Doc) decorate(w *reader.Writer, p Page, src, copied reader.Dict, extra 
 // replaced, with nothing pointing at the original, is a file that still holds
 // what the redaction removed. That is how defect #74 read, one object along.
 func (d *Doc) borrowedResources(w *reader.Writer, p Page, src reader.Dict, imgs []plannedImage) reader.Dict {
+	if p.outline && d.outlineRes != nil {
+		return d.outlineRes // already rebuilt, without its fonts
+	}
 	out := reader.Dict{}
 	res, ok := p.src.GetDict(src, "Resources")
 	if !ok {

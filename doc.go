@@ -98,6 +98,13 @@ type Doc struct {
 	// a cache outliving the write would hand the next one numbers that mean
 	// nothing there.
 	forms map[string]reader.Ref
+
+	// outliners are the text-to-paths converters of the write in progress, one
+	// per source document, and outlineRes the resources the page being built
+	// ended up with. Both belong to one write, like forms. See [Doc.OutlineText].
+	outliners      map[*reader.Document]*outliner
+	outlineRes     reader.Dict
+	outlineSkipped int
 }
 
 // A Page is one page of a document, borrowed from the file it came from. The
@@ -140,6 +147,10 @@ type Page struct {
 	// when ReplaceText is called rather than when the document is written: see
 	// [Doc.ReplaceText].
 	textEdits []TextEdit
+
+	// outline says the page's text is to be written as paths: see
+	// [Doc.OutlineText].
+	outline bool
 }
 
 // rewroteContent says whether this page's own content stream is replaced rather
@@ -153,7 +164,7 @@ type Page struct {
 // in silence: a page both redacted and stamped came back with the redacted text
 // still in it, and the fill over it made the document look clean.
 func (p Page) rewroteContent() bool {
-	return p.recolour != nil || len(p.redactions) > 0 || len(p.textEdits) > 0
+	return p.recolour != nil || len(p.redactions) > 0 || len(p.textEdits) > 0 || p.outline
 }
 
 // Open reads a PDF file held in memory, with the empty password.

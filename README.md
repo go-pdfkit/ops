@@ -641,6 +641,28 @@ whatever is drawn after it — which is how a recolouring turns a company's logo
 the same shade as its paragraphs. A test asserts the rectangle beside the text
 keeps its own red.
 
+`outlinetext` writes the text as vector paths, so no font is left in the page
+(the "font to outline" step a printer asks for). Library: `Doc.OutlineText`.
+
+```sh
+pdfops outlinetext report.pdf outlined.pdf
+pdfops outlinetext -pages 1-4 report.pdf outlined.pdf
+```
+
+Glyph outlines come from the font program (TrueType, CFF, Type 1, the
+standard 14) or, for a Type 3 font, from the glyph's own procedure, drawn as a
+Form XObject. Spacing, `TJ`, rise, horizontal scale and the clip render modes
+are kept; a page measured before and after differs by at most 0.002 % of its
+pixels. Text inside a Form XObject or tiling pattern is outlined in a **copy**,
+so a shared form is never changed under another page.
+
+Limits, stated rather than hidden: vertical writing is refused; embolden
+(mode 2 on a stroked-only font) is ignored; annotation appearance streams are
+**not** reached and are counted (`pdfops` prints how many); text state a form
+inherits from the page is not followed; a page cannot be outlined and
+recoloured, redacted or text-edited in the same pass. The work is bounded
+(glyph count, output bytes, form nesting) and a bound refuses, never truncates.
+
 Both the filling **and** the stroking colour are set, because text has render
 modes: 0 fills, 1 strokes, 2 does both.
 

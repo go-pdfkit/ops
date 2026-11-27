@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("BT /Nope 12 Tf (x) Tj ET /Fm0 Do")

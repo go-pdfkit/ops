@@ -70,6 +70,7 @@ var commands = []command{
 	{"layers", "(-list | -show <name> | -hide <name> | -add <name> | -drop <name>) <in.pdf> [out.pdf]", "the optional content a viewer calls layers", runLayers},
 	{"labels", "(-list | -clear | -rule <spec> …) <in.pdf> [out.pdf]", "set what a viewer shows in its toolbar: i, ii, iii then 1, 2, 3", runLabels},
 	{"textcolour", "-to <#rrggbb> [-pages <range>] <in.pdf> <out.pdf>", "paint the text one colour, leaving the rest of the page alone", runTextColour},
+	{"outlinetext", "[-pages <range>] <in.pdf> <out.pdf>", "write the text as vector paths, so no font is left (font to outline)", runOutlineText},
 	{"strip", "[-annotations] [-bookmarks] <in.pdf> <out.pdf>", "write the file without its metadata", runStrip},
 	{"sanitize", "<in.pdf> <out.pdf>", "remove what runs rather than shows: scripts, launching, embedded files", runSanitize},
 	{"outline", "(-drop | -from <toc.txt>) <in.pdf> <out.pdf>", "replace or remove the bookmarks", runOutline},
@@ -2196,6 +2197,35 @@ func runTextColour(c *context, args []string) error {
 		fmt.Fprintf(c.out, "%d drawing(s) were not recoloured: text inside a "+
 			"form or an image is shared between pages, so recolouring it for "+
 			"one page would change others\n", n)
+	}
+	return nil
+}
+
+// runOutlineText writes the text of the pages as paths.
+func runOutlineText(c *context, args []string) error {
+	fs := flags("outlinetext")
+	pages := fs.String("pages", "all", "which pages")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := wantArgs(fs, 2, "<in.pdf> <out.pdf>"); err != nil {
+		return err
+	}
+	d, err := c.open(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if err := d.OutlineText(*pages); err != nil {
+		return err
+	}
+	if err := save(d, fs.Arg(1)); err != nil {
+		return err
+	}
+	// Said after the write, because that is when it is known: an annotation's
+	// appearance is not rewritten, and a caller who needs no font at all has to
+	// hear that one was left.
+	if n := d.OutlineSkipped(); n > 0 {
+		fmt.Fprintf(c.out, "%d annotation appearance(s) still carry a font: they were not outlined\n", n)
 	}
 	return nil
 }

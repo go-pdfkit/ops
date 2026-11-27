@@ -429,6 +429,17 @@ func (d *Doc) rewrittenContent(p Page) (out []byte, rewritten bool, err error) {
 	if !p.rewroteContent() {
 		return nil, false, nil
 	}
+	if p.outline {
+		// The outlining is done where the resources are rebuilt (see
+		// buildBorrowedPage), and no other rewrite may run under it: each of them
+		// searches the text, which is gone.
+		if p.recolour != nil || len(p.redactions) > 0 || len(p.textEdits) > 0 {
+			return nil, false, fmt.Errorf("ops: page %d is to have its text outlined and also "+
+				"recoloured, redacted or replaced, which cannot be done on one page: "+
+				"each of those works on the text, and the text is paths", p.number)
+		}
+		return nil, false, nil
+	}
 	content, cerr := pageContent(p.src, p.number)
 	// ⛔⛔ THE ORDER IS A FACT ABOUT OFFSETS, NOT A PREFERENCE, and a page may
 	// not carry both a redaction and a replacement at all — ReplaceText and
