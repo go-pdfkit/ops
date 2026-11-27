@@ -11,17 +11,27 @@ import (
 // What these assert is what mutation of the guards found nothing holding: a
 // value on each side of the guard, not only that something is refused.
 
-func TestAResourceIsCostedDownToTheDepthBoundOnly(t *testing.T) {
+func TestAResourceIsCostedInFull(t *testing.T) {
 	deep := reader.Array{}
 	for i := 0; i < 40; i++ {
 		deep = reader.Array{deep}
 	}
-	// Nodes at depths 0 to 33 are counted, and what is below is not looked at.
-	if got, want := objCost(deep, 0), 34*outlineNodeCost; got != want {
+	// Every node is counted, however deep: nothing below a depth is free.
+	if got, want := objCost(deep), 41*outlineNodeCost; got != want {
 		t.Errorf("objCost = %d, want %d", got, want)
 	}
-	if got := objCost(reader.Dict{"ab": reader.Integer(1)}, 0); got != 2*outlineNodeCost+2 {
-		t.Errorf("a dictionary of one entry costs %d", got)
+	for name, c := range map[string]struct {
+		o    reader.Object
+		want int
+	}{
+		"dictionary": {reader.Dict{"ab": reader.Integer(1)}, 2*outlineNodeCost + 2},
+		"string":     {reader.String("abcde"), outlineNodeCost + 5},
+		"name":       {reader.Name("xyz"), outlineNodeCost + 3},
+		"array":      {reader.Array{reader.String("ab"), reader.Name("c")}, 3*outlineNodeCost + 3},
+	} {
+		if got := objCost(c.o); got != c.want {
+			t.Errorf("%s: objCost = %d, want %d", name, got, c.want)
+		}
 	}
 }
 

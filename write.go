@@ -3,6 +3,7 @@ package ops
 import (
 	"errors"
 	"fmt"
+	"maps"
 
 	"github.com/go-pdfkit/reader"
 )
@@ -27,6 +28,9 @@ type builtPage struct {
 	num  int
 	ref  reader.Ref
 	dict reader.Dict
+	// outlined says the page's text was written as paths: what text its
+	// structure elements carry of their own is then not carried across.
+	outlined bool
 }
 
 // Bytes writes the document out as a PDF file. Every borrowed page is copied
@@ -83,7 +87,7 @@ func (d *Doc) Bytes() ([]byte, error) {
 	// been written cannot be added to.
 	built := make([]builtPage, len(d.pages))
 	for i, p := range d.pages {
-		built[i] = builtPage{src: p.src, num: p.number, ref: refs[i], dict: dicts[i]}
+		built[i] = builtPage{src: p.src, num: p.number, ref: refs[i], dict: dicts[i], outlined: p.outline}
 	}
 	// The widgets of any added fields go onto the page dictionaries before they
 	// are put down, and their field objects are handed to the catalogue, which
@@ -394,7 +398,10 @@ func (d *Doc) decorate(w *reader.Writer, p Page, src, copied reader.Dict, extra 
 // what the redaction removed. That is how defect #74 read, one object along.
 func (d *Doc) borrowedResources(w *reader.Writer, p Page, src reader.Dict, imgs []plannedImage) reader.Dict {
 	if p.outline && d.outlineRes != nil {
-		return d.outlineRes // already rebuilt, without its fonts
+		// Already rebuilt, without its fonts. A copy: pages that share one outlined
+		// content stream share this dictionary, and what a stamp adds to one page's
+		// resources must not land on the others.
+		return maps.Clone(d.outlineRes)
 	}
 	out := reader.Dict{}
 	res, ok := p.src.GetDict(src, "Resources")

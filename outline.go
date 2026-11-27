@@ -10,7 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"slices"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -179,7 +179,12 @@ type outliner struct {
 	glyphs, read, wrote int
 }
 
-type type3Key struct{ font, code int }
+// A type3Key is a glyph of a font that is an object (font >= 0) or a direct
+// dictionary (dict, the identity of the map the document holds it in).
+type type3Key struct {
+	font, code int
+	dict       uintptr
+}
 
 type outPageKey struct {
 	sum [32]byte
@@ -209,19 +214,27 @@ func (o *outliner) charge(n int) error {
 
 // objCost is what a resource object built or copied directly costs: a node
 // each, and the length of its names.
-func objCost(o reader.Object, depth int) int {
-	n := outlineNodeCost
-	if depth > 32 {
-		return n
-	}
-	switch v := o.(type) {
-	case reader.Dict:
-		for k, e := range v {
-			n += len(k) + objCost(e, depth+1)
-		}
-	case reader.Array:
-		for _, e := range v {
-			n += objCost(e, depth+1)
+func objCost(o reader.Object) int {
+	n := 0
+	// A work list rather than recursion: what is below any depth is charged like
+	// the rest, and what is nested deeply costs a slice and not a stack.
+	todo := []reader.Object{o}
+	for len(todo) > 0 {
+		e := todo[len(todo)-1]
+		todo = todo[:len(todo)-1]
+		n += outlineNodeCost
+		switch v := e.(type) {
+		case reader.Dict:
+			for k, x := range v {
+				n += len(k)
+				todo = append(todo, x)
+			}
+		case reader.Array:
+			todo = append(todo, v...)
+		case reader.String:
+			n += len(v)
+		case reader.Name:
+			n += len(v)
 		}
 	}
 	return n
@@ -235,6 +248,7 @@ type textState struct {
 	size, tc, tw, tz, tl float64
 	rise                 float64
 	mode                 int
+	cm                   [6]float64 // the cm operations since BT, as q saved them
 }
 
 type contentEdit struct {
@@ -258,11 +272,11 @@ func (o *outliner) rewrite(data []byte, res reader.Dict, depth int) ([]byte, rea
 	}
 	// The resources are charged as they are built, a Type 3 glyph's and a form's
 	// included: they are output like any path.
-	if err := o.charge(objCost(newRes, 0)); err != nil {
+	if err := o.charge(objCost(newRes)); err != nil {
 		return nil, nil, err
 	}
 	c := &textRun{o: o, data: data, res: res, xobj: xobj, depth: depth,
-		cur: textState{tz: 1}, fonts: map[reader.Name]*render.GlyphFont{}, fontRefs: map[reader.Name]int{}}
+		cur: textState{tz: 1}, fonts: map[reader.Name]*render.GlyphFont{}, fontRefs: map[reader.Name]int{}, fontDicts: map[reader.Name]uintptr{}}
 	c.tm, c.tlm, c.cmAcc = identity, identity, identity
 	scan := reader.NewContentScanner(data)
 	for {
@@ -291,7 +305,7 @@ func (o *outliner) rewrite(data []byte, res reader.Dict, depth int) ([]byte, rea
 	if len(xobj) > 0 {
 		newRes["XObject"] = xobj
 	}
-	o.stripProperties(newRes, res, c.stripped)
+	o.stripProperties(newRes, c.stripped)
 	if err := o.charge(len(data)); err != nil { // what is copied over as it was
 		return nil, nil, err
 	}
@@ -358,6 +372,27 @@ func (o *outliner) rebuild(res reader.Dict, depth int) (out, xobj reader.Dict, e
 				rebuilt[name] = kept
 			}
 			out[k] = rebuilt
+		case "Properties":
+			// A property list that holds text of its own is written as a dictionary of
+			// this file's, entry by entry, whether the lists are direct or objects:
+			// copying the object would write the text into the file whatever is done
+			// to the resources after. stripProperties takes the text out of the lists
+			// that text was drawn over.
+			lists, _ := o.src.GetDict(res, "Properties")
+			rebuilt := reader.Dict{}
+			for name, entry := range lists {
+				pd, ok := o.src.GetDict(reader.Dict{"x": entry}, "x")
+				if !ok || !holdsAny(pd, markedText) {
+					rebuilt[name] = o.w.Copy(o.src, entry)
+					continue
+				}
+				full := reader.Dict{}
+				for pk, pv := range pd {
+					full[pk] = o.w.Copy(o.src, pv)
+				}
+				rebuilt[name] = full
+			}
+			out[k] = rebuilt
 		default:
 			out[k] = o.w.Copy(o.src, v)
 		}
@@ -367,18 +402,14 @@ func (o *outliner) rebuild(res reader.Dict, depth int) (out, xobj reader.Dict, e
 
 // stripProperties replaces, in the resources being built, the property lists
 // that named stripped entries by copies without the text entries.
-func (o *outliner) stripProperties(newRes, res reader.Dict, names map[reader.Name]bool) {
-	src, _ := o.src.GetDict(res, "Properties")
+func (o *outliner) stripProperties(newRes reader.Dict, names map[reader.Name]bool) {
 	out, _ := newRes["Properties"].(reader.Dict)
 	for name := range names {
-		pd, _ := o.src.GetDict(src, name)
-		kept := reader.Dict{}
-		for k, v := range pd {
-			if !slices.Contains(markedText, k) {
-				kept[k] = o.w.Copy(o.src, v)
+		if list, ok := out[name].(reader.Dict); ok {
+			for _, k := range markedText {
+				delete(list, k)
 			}
 		}
-		out[name] = kept
 	}
 }
 
@@ -452,7 +483,7 @@ func (o *outliner) member(entry reader.Object, subtype reader.Name, parent reade
 		}
 	}
 	d["Resources"] = newRes
-	if err := o.charge(objCost(d, 0)); err != nil {
+	if err := o.charge(objCost(d)); err != nil {
 		return nil, err
 	}
 	o.w.Put(out, contentStream(body, d))
@@ -480,9 +511,22 @@ func (o *outliner) annotationsWithText(page reader.Dict) int {
 // holdsText says whether one annotation still holds text.
 func (o *outliner) holdsText(ad reader.Dict, seen map[int]bool) bool {
 	sub, _ := reader.ToName(resolveObj(o.src, ad.Get("Subtype")))
-	for _, key := range textKeys[sub] {
-		if s, ok := reader.ToString(resolveObj(o.src, ad.Get(key))); ok && len(s) > 0 {
-			return true
+	// Any annotation may carry text of its own (/Contents, /RC), and a widget's
+	// value (/V) is the field's, which may be on a parent up the tree of fields.
+	if holdsString(o.src, ad, "Contents", "RC") {
+		return true
+	}
+	if sub == "Widget" {
+		f := ad
+		for i := 0; i <= maxOutlineNesting; i++ {
+			if holdsString(o.src, f, "V") {
+				return true
+			}
+			parent, ok := o.src.GetDict(f, "Parent")
+			if !ok {
+				break
+			}
+			f = parent
 		}
 	}
 	ap, _ := o.src.GetDict(ad, "AP")
@@ -505,10 +549,15 @@ func (o *outliner) holdsText(ad reader.Dict, seen map[int]bool) bool {
 	return false
 }
 
-// textKeys are the entries that hold text of their own, by annotation type.
-var textKeys = map[reader.Name][]reader.Name{
-	"FreeText": {"Contents", "RC"},
-	"Widget":   {"V"},
+// holdsString says whether any of the keys of a dictionary is a string that is
+// not empty.
+func holdsString(d *reader.Document, dict reader.Dict, keys ...reader.Name) bool {
+	for _, key := range keys {
+		if s, ok := reader.ToString(resolveObj(d, dict.Get(key))); ok && len(s) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // formHoldsFont says whether a form, or a form it draws, has a font in its
@@ -564,6 +613,8 @@ type textRun struct {
 	// fontRefs are the object numbers of the fonts named, -1 for a direct
 	// dictionary, which has no identity a document-wide cache could use.
 	fontRefs map[reader.Name]int
+	// fontDicts are the identities of the direct font dictionaries named.
+	fontDicts map[reader.Name]uintptr
 
 	cur      textState
 	stack    []textState
@@ -642,12 +693,16 @@ func numbers(ops []reader.Object, n int) ([]float64, bool) {
 func (c *textRun) font(name reader.Name) *render.GlyphFont {
 	f, loaded := c.fonts[name]
 	if !loaded { // a direct font dictionary is loaded again each time it is named
-		c.fontRefs[name] = -1
+		c.fontRefs[name], c.fontDicts[name] = -1, 0
 		if fonts, ok := c.o.src.GetDict(c.res, "Font"); ok {
 			if entry, has := fonts[name]; has {
 				f, _ = c.o.ol.Font(entry)
 				if ref, isRef := entry.(reader.Ref); isRef {
 					c.fontRefs[name] = ref.Num
+				} else if fd, isDict := entry.(reader.Dict); isDict {
+					// A direct font dictionary is the same font wherever the same
+					// dictionary is met, which is what its glyphs are kept under.
+					c.fontDicts[name] = reflect.ValueOf(fd).Pointer()
 				}
 			}
 		}
@@ -725,10 +780,15 @@ func (c *textRun) step(op reader.Operation) error {
 		if len(c.stack) >= maxOutlineQDepth {
 			return fmt.Errorf("%w: q nested more than %d deep", ErrOutlineTooLarge, maxOutlineQDepth)
 		}
-		c.stack = append(c.stack, c.cur)
+		// The cm operations since BT are part of what q and Q save: after Q the
+		// space is the one before the q, and so is the one a clip is put back in.
+		saved := c.cur
+		saved.cm = c.cmAcc
+		c.stack = append(c.stack, saved)
 	case "Q":
 		if n := len(c.stack); n > 0 {
 			c.cur, c.stack = c.stack[n-1], c.stack[:n-1]
+			c.cmAcc = c.cur.cm
 		}
 	case "cm":
 		if v, ok := numbers(op.Operands, 6); ok {
@@ -1088,7 +1148,7 @@ func (c *textRun) type3Glyph(f *render.GlyphFont, code int, place [6]float64, sb
 		if !ok {
 			return nil
 		}
-		ref, err := c.o.type3Form(f, proc, type3Key{c.fontRefs[c.cur.fontName], code}, c.res, c.depth)
+		ref, err := c.o.type3Form(f, proc, type3Key{c.fontRefs[c.cur.fontName], code, c.fontDicts[c.cur.fontName]}, c.res, c.depth)
 		if err != nil {
 			return err
 		}
@@ -1123,7 +1183,8 @@ func (c *textRun) type3Glyph(f *render.GlyphFont, code int, place [6]float64, sb
 // from a thousand streams is written once. Each form is charged on top of its
 // content.
 func (o *outliner) type3Form(f *render.GlyphFont, proc *reader.Stream, key type3Key, page reader.Dict, depth int) (reader.Ref, error) {
-	if key.font >= 0 {
+	kept := key.font >= 0 || key.dict != 0
+	if kept {
 		if done, hit := o.type3[key]; hit {
 			return done, nil
 		}
@@ -1132,7 +1193,7 @@ func (o *outliner) type3Form(f *render.GlyphFont, proc *reader.Stream, key type3
 		return reader.Ref{}, err
 	}
 	out := o.w.Reserve()
-	if key.font >= 0 {
+	if kept {
 		o.type3[key] = out
 	}
 	data, _, err := o.src.DecodeStream(proc)
@@ -1184,7 +1245,7 @@ func (o *outliner) type3Form(f *render.GlyphFont, proc *reader.Stream, key type3
 		"Matrix":    reader.Array{reader.Real(m[0]), reader.Real(m[1]), reader.Real(m[2]), reader.Real(m[3]), reader.Real(m[4]), reader.Real(m[5])},
 		"Resources": newRes,
 	}
-	if err := o.charge(objCost(form, 0)); err != nil {
+	if err := o.charge(objCost(form)); err != nil {
 		return reader.Ref{}, err
 	}
 	o.w.Put(out, contentStream(body, form))
