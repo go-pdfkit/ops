@@ -191,9 +191,16 @@ type pageOut struct {
 	res  reader.Dict
 }
 
+// traceCharge, when a test sets it, is told of every charge as it is made: the
+// tests assert that nothing is charged, or done, after the one that refused.
+var traceCharge func(n int)
+
 // charge adds n bytes of what is about to be written to the document's
 // running total, and refuses the moment it is past the bound.
 func (o *outliner) charge(n int) error {
+	if traceCharge != nil {
+		traceCharge(n)
+	}
 	if o.wrote += n; o.wrote > maxOutlineBytes {
 		return fmt.Errorf("%w: more than %d bytes of paths", ErrOutlineTooLarge, maxOutlineBytes)
 	}
@@ -361,9 +368,6 @@ func (o *outliner) rebuild(res reader.Dict, depth int) (out, xobj reader.Dict, e
 // stripProperties replaces, in the resources being built, the property lists
 // that named stripped entries by copies without the text entries.
 func (o *outliner) stripProperties(newRes, res reader.Dict, names map[reader.Name]bool) {
-	if len(names) == 0 {
-		return
-	}
 	src, _ := o.src.GetDict(res, "Properties")
 	out, _ := newRes["Properties"].(reader.Dict)
 	for name := range names {
@@ -514,10 +518,7 @@ func (o *outliner) formHoldsFont(s *reader.Stream, seen map[int]bool, depth int)
 	if depth > maxOutlineNesting {
 		return true // too deep to look at: assume the worst, which is what the count is for
 	}
-	res, ok := o.src.GetDict(s.Dict, "Resources")
-	if !ok {
-		return false
-	}
+	res, _ := o.src.GetDict(s.Dict, "Resources") // none: no fonts, no forms, nothing found below
 	if fonts, ok := o.src.GetDict(res, "Font"); ok && len(fonts) > 0 {
 		return true
 	}
@@ -896,10 +897,7 @@ func safeName(n reader.Name) bool {
 
 // drawsForm says whether a Do draws a form, which may be text.
 func (c *textRun) drawsForm(op reader.Operation) bool {
-	name, ok := reader.ToName(first(op.Operands))
-	if !ok {
-		return false
-	}
+	name, _ := reader.ToName(first(op.Operands)) // not a name: "" is no entry
 	xo, _ := c.o.src.GetDict(c.res, "XObject")
 	s, ok := reader.ToStream(resolveObj(c.o.src, xo[name]))
 	if !ok {

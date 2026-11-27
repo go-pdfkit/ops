@@ -2,6 +2,7 @@ package ops
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,6 +17,9 @@ import (
 func sweepBound(t *testing.T, src []byte) {
 	t.Helper()
 	defer func(v int) { maxOutlineBytes = v }(maxOutlineBytes)
+	defer func() { traceCharge = nil }()
+	var charges []int
+	traceCharge = func(n int) { charges = append(charges, n) }
 	d, _ := Open(src)
 	if err := d.OutlineText("all"); err != nil {
 		t.Fatal(err)
@@ -23,24 +27,38 @@ func sweepBound(t *testing.T, src []byte) {
 	if _, err := d.Bytes(); err != nil {
 		t.Fatal(err)
 	}
-	total := 0
+	all := append([]int(nil), charges...)
+	wrote, read := 0, 0
 	for _, o := range d.outliners {
-		total += o.wrote + o.read
+		wrote, read = wrote+o.wrote, read+o.read
 	}
 	refused := 0
-	for b := 1; b <= total+1; b++ {
+	for b := 1; b <= wrote+read+1; b++ {
 		maxOutlineBytes = b
+		charges = nil
 		d, _ := Open(src)
 		if err := d.OutlineText("all"); err != nil {
 			t.Fatal(err)
 		}
 		_, err := d.Bytes()
+		// Refused exactly when a total is past the bound, and nothing is charged
+		// after the charge that crossed it: an ignored refusal shows as either.
+		want, sum, cut := wrote > b || read > b, 0, len(all)
+		for i, n := range all {
+			if sum += n; sum > b {
+				cut = i + 1
+				break
+			}
+		}
+		if len(charges) > cut || !slices.Equal(charges, all[:len(charges)]) {
+			t.Fatalf("bound %d: charges %v, want a prefix of %v up to %d", b, charges, all, cut)
+		}
 		switch {
-		case err == nil:
-		case errors.Is(err, ErrOutlineTooLarge):
+		case err == nil && !want:
+		case errors.Is(err, ErrOutlineTooLarge) && want:
 			refused++
 		default:
-			t.Fatalf("bound %d: %v", b, err)
+			t.Fatalf("bound %d: err = %v, refusal wanted: %v", b, err, want)
 		}
 	}
 	if refused == 0 {
