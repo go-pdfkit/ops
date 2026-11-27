@@ -2225,7 +2225,9 @@ func runOutlineText(c *context, args []string) error {
 	// appearance is not rewritten, and a caller who needs no font at all has to
 	// hear that one was left.
 	if n := d.OutlineSkipped(); n > 0 {
-		fmt.Fprintf(c.out, "%d annotation appearance(s) still carry a font: they were not outlined\n", n)
+		fmt.Fprintf(c.out, "WARNING: %d annotation(s) still carry live text (a font in an appearance, "+
+			"a nested form, or the text of a FreeText or form field): they were NOT outlined, "+
+			"and the output is not free of fonts or searchable text\n", n)
 	}
 	return nil
 }

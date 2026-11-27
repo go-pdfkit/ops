@@ -113,7 +113,7 @@ func TestOutlineTextSaysWhatItDidNotReach(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d: %s", code, msg)
 	}
-	if !strings.Contains(said, "1 annotation appearance(s) still carry a font") {
+	if !strings.Contains(said, "WARNING: 1 annotation(s) still carry live text") {
 		t.Errorf("it did not say what it left: %q", said)
 	}
 	// And a document without one says nothing.

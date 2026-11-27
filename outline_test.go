@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-gfx/gfx/raster"
 	"github.com/go-opentype/fonts"
@@ -704,7 +706,9 @@ func TestAnnotationsWithFontsAreCounted(t *testing.T) {
 
 func TestOutlineNumbersHaveNoExponent(t *testing.T) {
 	for v, want := range map[float64]string{0: "0", 1: "1", -0.00001: "0", 1e-9: "0", 12.34567: "12.3457",
-		1e15: "1000000000000000", -2.5: "-2.5"} {
+		1e8: "100000000", -2.5: "-2.5",
+		// Past the bound a number is not written: 1e300 was 300 digits.
+		1e15: "0", 1e300: "0"} {
 		if got := olNum(v); got != want {
 			t.Errorf("olNum(%v) = %q, want %q", v, got, want)
 		}
@@ -727,14 +731,45 @@ func FuzzOutlineContent(f *testing.F) {
 		"BT /F1 1e9 Tf 100000 Tz (aaaa) Tj ' \" ET",
 		"BT 7 Tr /F1 12 Tf 0 0 0 0 0 0 Tm (a) Tj",
 		"/Fm Do BT /Nope 5 Tf (x) Tj ET",
+		"BT /T3 12 Tf (AAAA) Tj ET",
+		"/Fm Do /Fm Do q /Fm Do Q BT /F1 9 Tf /T3 9 Tf (AA) Tj ET",
+		"/Span <</ActualText (s)>> BDC BT /F1 12 Tf 7 Tr (a) Tj ET EMC",
+		"/Span /P1 BDC BT /F1 12 Tf (a) Tj ET /Fm Do EMC /G1 gs",
+		"BT /F1 12 Tf 7 Tr (a) Tj 2 0 0 2 5 5 cm 0 0 0 0 0 0 cm ET",
 	} {
 		f.Add([]byte(seed))
+	}
+	// The page the content is run over: a standard font, a Type 3 font whose
+	// glyph draws the next one, a form holding text, a property list and a
+	// soft mask.
+	build := func(w *reader.Writer, res reader.Dict) {
+		chainedType3(3)(w, res)
+		t3 := res["Font"].(reader.Dict)["F1"]
+		stdFont(w, res)
+		res["Font"].(reader.Dict)["T3"] = t3
+		fm := w.Add(&reader.Stream{Dict: reader.Dict{"Subtype": reader.Name("Form"),
+			"BBox":      reader.Array{reader.Integer(0), reader.Integer(0), reader.Integer(100), reader.Integer(100)},
+			"Resources": reader.Dict{"Font": res["Font"]}}, Raw: []byte("BT /F1 12 Tf (form) Tj /T3 9 Tf (A) Tj ET")})
+		res["XObject"] = reader.Dict{"Fm": fm}
+		res["Properties"] = reader.Dict{"P1": reader.Dict{"ActualText": reader.String("p")}}
+		res["ExtGState"] = reader.Dict{"G1": reader.Dict{"SMask": reader.Dict{"Type": reader.Name("Mask"),
+			"S": reader.Name("Alpha"), "G": fm}}}
 	}
 	f.Fuzz(func(t *testing.T, content []byte) {
 		if len(content) > 4096 {
 			return
 		}
-		src := buildDoc(t, 1, string(content), stdFont, nil)
+		start := time.Now()
+		var m0 runtime.MemStats
+		runtime.ReadMemStats(&m0)
+		defer func() {
+			var m1 runtime.MemStats
+			runtime.ReadMemStats(&m1)
+			if d := time.Since(start); d > time.Second || m1.TotalAlloc-m0.TotalAlloc > 256<<20 {
+				t.Errorf("%d bytes of content took %v and %d MiB", len(content), d, (m1.TotalAlloc-m0.TotalAlloc)>>20)
+			}
+		}()
+		src := buildDoc(t, 1, string(content), build, nil)
 		d, err := Open(src)
 		if err != nil {
 			t.Fatal(err)
