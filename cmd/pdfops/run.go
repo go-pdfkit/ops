@@ -35,6 +35,7 @@ type context struct {
 // commands lists the verbs in the order the help prints them.
 var commands = []command{
 	{"merge", "<out.pdf> <in.pdf> [in.pdf …]", "join files, in the order given", runMerge},
+	{"workflow", "(check <wf.json> | nodes | run [-secrets <file.json>] -o <out> <wf.json> <in.pdf> …)", "run a BentoPDF workflow file: a graph of these verbs", runWorkflow},
 	{"select", "-pages <range> <in.pdf> <out.pdf>", "keep the pages a range names, in its order", runSelect},
 	{"delete", "-pages <range> <in.pdf> <out.pdf>", "drop the pages a range names", runDelete},
 	{"reverse", "<in.pdf> <out.pdf>", "put the pages in the opposite order", runReverse},

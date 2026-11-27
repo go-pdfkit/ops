@@ -316,19 +316,20 @@ func runExtract(x *exec) ([]item, error) {
 	var out []item
 	for _, it := range x.in["pdf"] {
 		nums, err := ops.ParseRange(spec, it.doc.PageCount())
-		if err != nil {
-			return nil, err
-		}
-		if err := x.st.reserve(len(nums), 1); err != nil {
-			return nil, err
+		if err == nil {
+			err = x.st.reserve(len(nums), 1)
 		}
 		base := strings.TrimSuffix(it.name, ".pdf")
 		for _, n := range nums {
-			d := ops.Merge(it.doc)
-			if err := d.Select(strconv.Itoa(n)); err != nil {
-				return nil, err
+			if err != nil {
+				break
 			}
+			d := ops.Merge(it.doc)
+			err = d.Select(strconv.Itoa(n)) // n is in range: cannot fail
 			out = append(out, item{fmt.Sprintf("%s-p%d.pdf", base, n), d})
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
@@ -604,10 +605,10 @@ func runFlatten(x *exec) ([]item, error) {
 func runDownload(x *exec) ([]item, error) {
 	for _, it := range x.in["pdf"] {
 		b, err := it.doc.Bytes()
-		if err != nil {
-			return nil, err
+		if err == nil {
+			err = x.st.output(len(b))
 		}
-		if err := x.st.output(len(b)); err != nil {
+		if err != nil {
 			return nil, err
 		}
 		x.res.Files = append(x.res.Files, File{Name: it.name, Data: b})

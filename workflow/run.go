@@ -233,13 +233,13 @@ func clone(items []item, st *state) ([]item, error) {
 			return nil, err
 		}
 		b, err := it.doc.Bytes()
-		if err != nil {
-			return nil, err
+		if err == nil {
+			err = st.input(len(b))
 		}
-		if err := st.input(len(b)); err != nil {
-			return nil, err
+		var d *ops.Doc
+		if err == nil {
+			d, err = ops.Open(b)
 		}
-		d, err := ops.Open(b)
 		if err != nil {
 			return nil, err
 		}

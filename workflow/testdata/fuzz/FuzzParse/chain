@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"version\":1,\"nodes\":[{\"id\":\"i\",\"type\":\"PDFInputNode\",\"controls\":{}},{\"id\":\"r\",\"type\":\"RotateNode\",\"controls\":{\"angle\":\"90\"}},{\"id\":\"o\",\"type\":\"DownloadNode\",\"controls\":{}}],\"connections\":[{\"id\":\"a\",\"source\":\"i\",\"sourceOutput\":\"pdf\",\"target\":\"r\",\"targetInput\":\"pdf\"},{\"id\":\"b\",\"source\":\"r\",\"sourceOutput\":\"pdf\",\"target\":\"o\",\"targetInput\":\"pdf\"}]}")
