@@ -2,6 +2,7 @@ package ops
 
 import (
 	"bytes"
+	"slices"
 	"sort"
 
 	"github.com/go-pdfkit/reader"
@@ -219,9 +220,17 @@ func (s *structRebuild) element(o reader.Object, parent reader.Ref, page, depth 
 		// and is kept, as long as the page it sits on is still here.
 		return reader.Ref{}, 0, false
 	}
+	// What an element says of its own content in words (/ActualText, /Alt, /E)
+	// is text a reader selects and searches in place of what is drawn: where the
+	// page it is on has had its text written as paths, it is not carried across.
+	onPage := page
+	if onPage <= 0 {
+		onPage = at
+	}
+	outlined := s.at[onPage].outlined
 	out := reader.Dict{}
 	for k, v := range elem {
-		if structKeysRebuilt[k] {
+		if structKeysRebuilt[k] || (outlined && slices.Contains(markedText, k)) {
 			continue
 		}
 		out[k] = s.w.Copy(s.src, v)

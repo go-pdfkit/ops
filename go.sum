@@ -55,8 +55,8 @@ github.com/go-pdfkit/pdfkit v0.20.0 h1:AvIGB6abZEqeUlzXXweplAfdtSdmHjpo7GsgEMUm6
 github.com/go-pdfkit/pdfkit v0.20.0/go.mod h1:qiVyvQ/GJ2l4qb2OpWfnA7nwaZe5WedcdJCzQRkCYlA=
 github.com/go-pdfkit/reader v0.20.0 h1:AM49/MJkaqWx0B8TNaWLuqXBDWE+ULiTqJu4h5XhSiQ=
 github.com/go-pdfkit/reader v0.20.0/go.mod h1:r7knhK/fa8YSYsuq1NrvECGEqfKigYj47Mf0ce7CFCY=
-github.com/go-pdfkit/render v0.70.0 h1:Os/ytO72+4n491NHV+rxZgiazUXnW4Q5y4CITWVzPS8=
-github.com/go-pdfkit/render v0.70.0/go.mod h1:iPmbwqlB7tOWDeMb/S9FXK/J50UqfpuYUNuBRmbSM1I=
+github.com/go-pdfkit/render v0.71.0 h1:F8usUe/Z0YDsH8pbFEGfZOn+iMXyGFdO9vWyDIByHDM=
+github.com/go-pdfkit/render v0.71.0/go.mod h1:iPmbwqlB7tOWDeMb/S9FXK/J50UqfpuYUNuBRmbSM1I=
 github.com/go-pdfkit/xfa v0.22.0 h1:IbdMcNYN40kataz/n+3pkz2METftMh+re/MkcY2eCbw=
 github.com/go-pdfkit/xfa v0.22.0/go.mod h1:nZzuk+EIVeUzKfwZkWhE2/fAWr4IW/bouLf5xMED+Bg=
 github.com/go-richdoc/html v0.3.0 h1:FQ5PLPxm0BCqIk1TN1cMWe8OuZ3zERlAQuy5nrrng4E=

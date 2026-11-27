@@ -10,12 +10,14 @@ require (
 	github.com/go-images/jpeg v0.3.0
 	github.com/go-ooxml/ooxml v0.8.0
 	github.com/go-ooxml/opc v0.2.1
+	github.com/go-opentype/fonts v0.14.0
+	github.com/go-opentype/opentype v0.22.0
 	github.com/go-pdfkit/document v0.2.0
 	github.com/go-pdfkit/extract v0.11.0
 	github.com/go-pdfkit/forms v0.6.0
 	github.com/go-pdfkit/pdffont v0.4.0
 	github.com/go-pdfkit/reader v0.20.0
-	github.com/go-pdfkit/render v0.70.0
+	github.com/go-pdfkit/render v0.71.0
 	github.com/go-pdfkit/xfa v0.22.0
 	github.com/go-richdoc/markdown v0.13.0
 	github.com/go-richdoc/richdoc v0.10.0
@@ -34,8 +36,6 @@ require (
 	github.com/go-images/gif v0.2.0 // indirect
 	github.com/go-images/jpeg2000 v0.14.0 // indirect
 	github.com/go-images/png v0.2.0 // indirect
-	github.com/go-opentype/fonts v0.14.0 // indirect
-	github.com/go-opentype/opentype v0.22.0 // indirect
 	github.com/go-pdfkit/html2pdf v0.4.1 // indirect
 	github.com/go-pdfkit/pdfkit v0.20.0 // indirect
 	github.com/go-richdoc/html v0.3.0 // indirect

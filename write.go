@@ -1,7 +1,9 @@
 package ops
 
 import (
+	"errors"
 	"fmt"
+	"maps"
 
 	"github.com/go-pdfkit/reader"
 )
@@ -26,6 +28,9 @@ type builtPage struct {
 	num  int
 	ref  reader.Ref
 	dict reader.Dict
+	// outlined says the page's text was written as paths: what text its
+	// structure elements carry of their own is then not carried across.
+	outlined bool
 }
 
 // Bytes writes the document out as a PDF file. Every borrowed page is copied
@@ -64,6 +69,7 @@ func (d *Doc) Bytes() ([]byte, error) {
 		}
 	}
 	d.redactErr = nil
+	d.outliners, d.outlineRes, d.outlineSkipped = nil, nil, 0
 	for i, p := range d.pages {
 		dicts[i] = d.buildPage(w, p, pagesRef, where, kept)
 	}
@@ -81,7 +87,7 @@ func (d *Doc) Bytes() ([]byte, error) {
 	// been written cannot be added to.
 	built := make([]builtPage, len(d.pages))
 	for i, p := range d.pages {
-		built[i] = builtPage{src: p.src, num: p.number, ref: refs[i], dict: dicts[i]}
+		built[i] = builtPage{src: p.src, num: p.number, ref: refs[i], dict: dicts[i], outlined: p.outline}
 	}
 	// The widgets of any added fields go onto the page dictionaries before they
 	// are put down, and their field objects are handed to the catalogue, which
@@ -236,6 +242,22 @@ func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, whe
 	// told. A branch would be an arm no test could reach.
 	imgs, _ := d.plannedImages(&p, p.redactions)
 
+	// The text of a page to be outlined is rewritten here, with its resources:
+	// the fonts are not carried over, and a Type 3 glyph becomes a form that
+	// has to be put in them. A failure is recorded like a redaction's, and for
+	// the same reason: a page still holding its text is not what was asked for.
+	d.outlineRes = nil
+	if p.outline && err == nil {
+		var oerr error
+		out, d.outlineRes, oerr = d.outlinedPage(w, p, src)
+		if oerr != nil {
+			d.redactErr, rewritten = errors.Join(d.redactErr, oerr), false
+			d.outlineRes = nil
+		} else {
+			rewritten = true
+		}
+	}
+
 	copied := reader.Dict{}
 	for k, v := range src {
 		if rebuiltPageKeys[k] || (d.sanitize && sanitisedPageKeys[k]) {
@@ -244,12 +266,12 @@ func (d *Doc) buildBorrowedPage(w *reader.Writer, p Page, parent reader.Ref, whe
 		if k == "Contents" && rewritten {
 			continue // its replacement is added below; copying it would orphan it
 		}
-		if k == "Resources" && len(imgs) > 0 {
+		if k == "Resources" && (len(imgs) > 0 || d.outlineRes != nil) {
 			continue // rebuilt below, with the blanked pictures in place
 		}
 		copied[k] = w.Copy(p.src, v)
 	}
-	if len(imgs) > 0 {
+	if len(imgs) > 0 || d.outlineRes != nil {
 		copied["Resources"] = d.borrowedResources(w, p, src, imgs)
 	}
 	if rewritten {
@@ -375,6 +397,12 @@ func (d *Doc) decorate(w *reader.Writer, p Page, src, copied reader.Dict, extra 
 // replaced, with nothing pointing at the original, is a file that still holds
 // what the redaction removed. That is how defect #74 read, one object along.
 func (d *Doc) borrowedResources(w *reader.Writer, p Page, src reader.Dict, imgs []plannedImage) reader.Dict {
+	if p.outline && d.outlineRes != nil {
+		// Already rebuilt, without its fonts. A copy: pages that share one outlined
+		// content stream share this dictionary, and what a stamp adds to one page's
+		// resources must not land on the others.
+		return maps.Clone(d.outlineRes)
+	}
 	out := reader.Dict{}
 	res, ok := p.src.GetDict(src, "Resources")
 	if !ok {
