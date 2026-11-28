@@ -27,7 +27,7 @@ func (i Issue) String() string {
 	if i.Node == "" {
 		return fmt.Sprintf("%s: %s", i.Level, i.Message)
 	}
-	return fmt.Sprintf("%s: node %s: %s", i.Level, i.Node, i.Message)
+	return fmt.Sprintf("%s: node %q: %s", i.Level, i.Node, i.Message)
 }
 
 // HasError says whether any issue is an Error.
@@ -84,7 +84,7 @@ func Check(w *Workflow) []Issue {
 				add(Warning, n.ID, "%s: controls not honoured here: %s", s.label, strings.Join(ig, ", "))
 			}
 		case unsupported[n.Type] != "":
-			add(Error, n.ID, "%s has no pdfops verb yet", n.Type)
+			add(Error, n.ID, "%q has no pdfops verb yet", n.Type)
 		default:
 			add(Error, n.ID, "unknown node type %q", n.Type)
 		}
@@ -153,7 +153,7 @@ func Check(w *Workflow) []Issue {
 		}
 	}
 	if _, left := g.order(); left != nil {
-		add(Error, "", "the graph has a cycle through: %s", strings.Join(left, ", "))
+		add(Error, "", "the graph has a cycle through: %q", left)
 		return out
 	}
 	reach := g.reaching()

@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -194,6 +195,37 @@ func (x *exec) text(key, def string) (string, error) {
 	return "", x.fail(key, "expected text, got %v", v)
 }
 
+// MaxSpecLength bounds a page-range control. A range names pages, and a
+// thousand-byte list of "*" is no page list a person wrote.
+const MaxSpecLength = 256
+
+// spec reads a page-range control, at most MaxSpecLength bytes.
+func (x *exec) spec(key, def string) (string, error) {
+	s, err := x.text(key, def)
+	if err == nil && len(s) > MaxSpecLength {
+		err = x.fail(key, "%d bytes; at most %d", len(s), MaxSpecLength)
+	}
+	return s, err
+}
+
+// count is how many pages spec names in a document of n pages. It adds up part
+// by part and refuses as soon as the sum is more than the running node may
+// still make, so a spec that repeats pages never builds its whole list.
+func (x *exec) count(spec string, n int) (int, error) {
+	total := 0
+	for _, part := range strings.Split(spec, ",") {
+		nums, err := ops.ParseRange(part, n)
+		if err != nil {
+			return 0, err
+		}
+		if len(nums) > x.st.room()-total {
+			return 0, x.st.budget("this node would make more than the %d pages allowed in all", x.st.maxPages)
+		}
+		total += len(nums)
+	}
+	return total, nil
+}
+
 // number reads a control as a number in [lo, hi]; BentoPDF keeps selects as
 // strings, so "90" is read as 90.
 func (x *exec) number(key string, def, lo, hi float64) (float64, error) {
@@ -287,6 +319,9 @@ func runMerge(x *exec) ([]item, error) {
 
 func runInterleave(x *exec) ([]item, error) {
 	in := x.in["pdf"]
+	if len(in) == 0 {
+		return nil, errors.New("nothing to interleave")
+	}
 	if len(in) == 1 {
 		return in, nil
 	}
@@ -301,35 +336,47 @@ func runInterleave(x *exec) ([]item, error) {
 }
 
 func runSelect(x *exec) ([]item, error) {
-	spec, err := x.text("pages", "1-3")
+	spec, err := x.spec("pages", "1-3")
 	if err != nil {
 		return nil, err
+	}
+	// A spec may repeat a page, so what it makes is counted, and reserved,
+	// before any document is touched.
+	for _, it := range x.in["pdf"] {
+		n, err := x.count(spec, it.doc.PageCount())
+		if err == nil {
+			err = x.st.reserve(n, 1)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	return x.each(func(d *ops.Doc) error { return d.Select(spec) })
 }
 
 func runExtract(x *exec) ([]item, error) {
-	spec, err := x.text("pages", "1,2,3")
+	spec, err := x.spec("pages", "1,2,3")
 	if err != nil {
 		return nil, err
 	}
 	var out []item
 	for _, it := range x.in["pdf"] {
-		nums, err := ops.ParseRange(spec, it.doc.PageCount())
+		n, err := x.count(spec, it.doc.PageCount())
 		if err == nil {
-			err = x.st.reserve(len(nums), 1)
-		}
-		base := strings.TrimSuffix(it.name, ".pdf")
-		for _, n := range nums {
-			if err != nil {
-				break
-			}
-			d := ops.Merge(it.doc)
-			err = d.Select(strconv.Itoa(n)) // n is in range: cannot fail
-			out = append(out, item{fmt.Sprintf("%s-p%d.pdf", base, n), d})
+			err = x.st.reserve(n, 1)
 		}
 		if err != nil {
 			return nil, err
+		}
+		// count has parsed every part of spec, so the whole parses, and each
+		// number is in range: Select cannot fail. A spec that selected nothing
+		// makes no item, and Run refuses a node that made none.
+		nums, _ := ops.ParseRange(spec, it.doc.PageCount())
+		base := strings.TrimSuffix(it.name, ".pdf")
+		for _, p := range nums {
+			d := ops.Merge(it.doc)
+			_ = d.Select(strconv.Itoa(p))
+			out = append(out, item{fmt.Sprintf("%s-p%d.pdf", base, p), d})
 		}
 	}
 	return out, nil
@@ -344,7 +391,7 @@ func runRotate(x *exec) ([]item, error) {
 }
 
 func runDelete(x *exec) ([]item, error) {
-	spec, err := x.text("pages", "1")
+	spec, err := x.spec("pages", "1")
 	if err != nil {
 		return nil, err
 	}
@@ -489,7 +536,7 @@ func runWatermark(x *exec) ([]item, error) {
 	if err != nil {
 		return nil, err
 	}
-	pages, err := x.text("pages", "all")
+	pages, err := x.spec("pages", "all")
 	if err != nil {
 		return nil, err
 	}

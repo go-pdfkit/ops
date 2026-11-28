@@ -14,7 +14,12 @@
 // produce. Passwords are never read from, or written to, a workflow file: a
 // control that looks like a secret is blanked on the way in and on the way out
 // (BentoPDF does the same on save and export), and the secret a node needs
-// at run time comes from Options.Secrets.
+// at run time comes from Options.Secrets. Keys are exact and unique, and ids
+// hold only printable characters.
+//
+// Cancellation of the context given to Run is observed between nodes, not
+// inside one: the ops verbs take no context, so a node that has started runs
+// to its end, within the page and byte bounds.
 package workflow
 
 import (
@@ -98,36 +103,68 @@ func Parse(b []byte) (*Workflow, error) {
 		return nil, invalid("larger than %d bytes", MaxFileBytes)
 	}
 	var raw struct {
-		Version     int           `json:"version"`
-		Nodes       *[]Node       `json:"nodes"`
-		Connections *[]Connection `json:"connections"`
+		Version     int                `json:"version"`
+		Nodes       *[]json.RawMessage `json:"nodes"`
+		Connections *[]json.RawMessage `json:"connections"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return nil, invalid("%v", err)
+	}
+	// The keys are exact and unique: encoding/json would match them without
+	// regard to case and merge repeats.
+	if err := strictKeys(b, "the file", "version", "nodes", "connections"); err != nil {
+		return nil, err
 	}
 	// BentoPDF: !Array.isArray(data.nodes) || !Array.isArray(data.connections).
 	if raw.Nodes == nil || raw.Connections == nil {
 		return nil, invalid("nodes and connections must both be lists")
 	}
-	w := &Workflow{Version: raw.Version, Nodes: *raw.Nodes, Connections: *raw.Connections}
-	if len(w.Nodes) > MaxNodes {
-		return nil, invalid("%d nodes; at most %d", len(w.Nodes), MaxNodes)
+	// The counts are checked before any element is decoded.
+	if len(*raw.Nodes) > MaxNodes {
+		return nil, invalid("%d nodes; at most %d", len(*raw.Nodes), MaxNodes)
 	}
-	if len(w.Connections) > MaxConnections {
-		return nil, invalid("%d connections; at most %d", len(w.Connections), MaxConnections)
+	if len(*raw.Connections) > MaxConnections {
+		return nil, invalid("%d connections; at most %d", len(*raw.Connections), MaxConnections)
 	}
-	for i := range w.Nodes {
-		if err := w.Nodes[i].tidy(); err != nil {
+	w := &Workflow{Version: raw.Version, Nodes: make([]Node, len(*raw.Nodes)), Connections: make([]Connection, len(*raw.Connections))}
+	for i, el := range *raw.Nodes {
+		if err := strictKeys(el, "a node", "id", "type", "position", "controls"); err != nil {
 			return nil, err
 		}
-		if blankSecrets(w.Nodes[i].Controls) {
-			w.Blanked = append(w.Blanked, w.Nodes[i].ID)
+		n := &w.Nodes[i]
+		var ctl struct {
+			Controls json.RawMessage `json:"controls"`
+		}
+		if err := json.Unmarshal(el, n); err != nil {
+			return nil, invalid("%v", err)
+		}
+		_ = json.Unmarshal(el, &ctl) // el has been decoded once already
+		if n.Controls != nil {
+			if err := strictKeys(ctl.Controls, "the controls of a node"); err != nil {
+				return nil, err
+			}
+		}
+		if err := n.tidy(); err != nil {
+			return nil, err
+		}
+		if blankSecrets(n.Controls) {
+			w.Blanked = append(w.Blanked, n.ID)
 		}
 	}
-	for _, c := range w.Connections {
+	for i, el := range *raw.Connections {
+		if err := strictKeys(el, "a connection", "id", "source", "sourceOutput", "target", "targetInput"); err != nil {
+			return nil, err
+		}
+		c := &w.Connections[i]
+		if err := json.Unmarshal(el, c); err != nil {
+			return nil, invalid("%v", err)
+		}
 		for _, s := range []string{c.ID, c.Source, c.SourceOutput, c.Target, c.TargetInput} {
 			if len(s) > MaxIDLength {
 				return nil, invalid("a connection field is %d bytes; at most %d", len(s), MaxIDLength)
+			}
+			if !printable(s) {
+				return nil, invalid("a connection field holds a character that is not printable")
 			}
 		}
 	}
@@ -139,12 +176,18 @@ func (n *Node) tidy() error {
 	if len(n.ID) > MaxIDLength || len(n.Type) > MaxIDLength {
 		return invalid("a node id or type is longer than %d bytes", MaxIDLength)
 	}
+	if !printable(n.ID) || !printable(n.Type) {
+		return invalid("a node id or type holds a character that is not printable")
+	}
 	if len(n.Controls) > MaxControlsPerNode {
 		return invalid("node %q has %d controls; at most %d", n.ID, len(n.Controls), MaxControlsPerNode)
 	}
 	for k, v := range n.Controls {
 		if len(k) > MaxIDLength {
 			return invalid("node %q has a control name longer than %d bytes", n.ID, MaxIDLength)
+		}
+		if !printable(k) {
+			return invalid("node %q has a control name that is not printable", n.ID)
 		}
 		switch v := v.(type) {
 		case bool, float64:

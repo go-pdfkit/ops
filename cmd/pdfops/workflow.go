@@ -155,7 +155,7 @@ func workflowRun(c *context, args []string) error {
 	var buf bytes.Buffer
 	zipped, err := res.Encode(&buf)
 	if err == nil {
-		err = os.WriteFile(*out, buf.Bytes(), 0o644)
+		err = writeAtomic(*out, buf.Bytes())
 	}
 	if err != nil {
 		return err
@@ -192,6 +192,35 @@ func readSecrets(path string) (map[string]map[string]string, error) {
 	return m, nil
 }
 
+// maxInputBytes bounds the PDFs read for one run, all files together. It is a
+// variable so a test can lower it. Each file is read through readBounded with
+// what is left of it, so no file is read whole before it is refused.
+var maxInputBytes = workflow.DefaultMaxBytes
+
+// writeAtomic writes a file by renaming a finished temporary one over it, so
+// a reader never sees half a result and a symlink at path is replaced, not
+// followed to wherever it points.
+func writeAtomic(path string, b []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".pdfops-*")
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(b)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(f.Name(), 0o644)
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), path)
+	}
+	if err != nil {
+		os.Remove(f.Name())
+	}
+	return err
+}
+
 // assignInputs gives the files to the input nodes: all to the one input
 // node, or one each when there are as many.
 func assignInputs(w *workflow.Workflow, files []string) (map[string][]workflow.File, error) {
@@ -205,11 +234,13 @@ func assignInputs(w *workflow.Workflow, files []string) (map[string][]workflow.F
 		return nil, fmt.Errorf("the workflow has %d input nodes and %d files were given: give one file for each, or use a workflow with one input node", len(ids), len(files))
 	}
 	in := map[string][]workflow.File{}
+	remaining := int64(maxInputBytes)
 	for i, p := range files {
-		b, err := os.ReadFile(p)
+		b, err := readBounded(p, remaining)
 		if err != nil {
 			return nil, err
 		}
+		remaining -= int64(len(b))
 		id := ids[0]
 		if len(ids) > 1 {
 			id = ids[i]

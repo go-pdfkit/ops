@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"version\":1,\"nodes\":[{\"id\":\"i\",\"type\":\"PDFInputNode\"},{\"id\":\"x\",\"type\":\"ExtractPagesNode\",\"controls\":{\"pages\":\"even\"}},{\"id\":\"m\",\"type\":\"AlternateMergeNode\"},{\"id\":\"o\",\"type\":\"DownloadNode\"}],\"connections\":[{\"id\":\"a\",\"source\":\"i\",\"sourceOutput\":\"pdf\",\"target\":\"x\",\"targetInput\":\"pdf\"},{\"id\":\"b\",\"source\":\"x\",\"sourceOutput\":\"pdf\",\"target\":\"m\",\"targetInput\":\"pdf\"},{\"id\":\"c\",\"source\":\"m\",\"sourceOutput\":\"pdf\",\"target\":\"o\",\"targetInput\":\"pdf\"}]}")

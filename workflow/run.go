@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path"
 	"strings"
 
 	"github.com/go-pdfkit/ops"
@@ -67,7 +66,7 @@ type NodeError struct {
 }
 
 func (e *NodeError) Error() string {
-	return fmt.Sprintf("%s (node %s): %v", e.Label, e.ID, e.Err)
+	return fmt.Sprintf("%s (node %q): %v", e.Label, e.ID, e.Err)
 }
 
 func (e *NodeError) Unwrap() error { return e.Err }
@@ -82,45 +81,71 @@ var ErrBudget = errors.New("workflow: over budget")
 type state struct {
 	maxPages, maxIn, maxOut int
 	pages, in, out          int
+	// pending is what the running node has reserved so far: a node fed several
+	// documents reserves for each, and the sum must fit.
+	pending int
 }
 
 func (s *state) budget(format string, a ...any) error {
 	return fmt.Errorf("%w: %s", ErrBudget, fmt.Sprintf(format, a...))
 }
 
+// Every comparison below is written n > max-used, never used+n > max, so that
+// a sum cannot wrap on a 32-bit int.
+
 // input charges bytes read.
 func (s *state) input(n int) error {
-	s.in += n
-	if s.in > s.maxIn {
+	if n < 0 || n > s.maxIn-s.in {
 		return s.budget("more than %d bytes of input", s.maxIn)
 	}
+	s.in += n
 	return nil
 }
 
 // output charges bytes written.
 func (s *state) output(n int) error {
-	s.out += n
-	if s.out > s.maxOut {
+	if n < 0 || n > s.maxOut-s.out {
 		return s.budget("more than %d bytes of output", s.maxOut)
 	}
+	s.out += n
 	return nil
 }
 
-// reserve refuses, before the work is done, a node whose output would be
-// pages*times pages and would not fit in what is left.
-func (s *state) reserve(pages, times int) error {
-	if pages > (s.maxPages-s.pages)/times {
-		return s.budget("this node would make %d pages, %d allowed in all", pages*times, s.maxPages)
+// room is the pages the running node may still make.
+func (s *state) room() int {
+	r := s.maxPages - s.pages - s.pending
+	if r < 0 {
+		return 0
+	}
+	return r
+}
+
+// check refuses, before the work is done, pages*times pages that would not
+// fit in what is left. It reserves nothing.
+func (s *state) check(pages, times int) error {
+	if pages < 0 || times < 1 || pages > s.room()/times {
+		return s.budget("this node would make more than the %d pages allowed in all", s.maxPages)
 	}
 	return nil
 }
 
-// charge counts the pages a node produced.
+// reserve is check, and keeps the pages for the running node: the next
+// reserve of the same node sees what this one took.
+func (s *state) reserve(pages, times int) error {
+	if err := s.check(pages, times); err != nil {
+		return err
+	}
+	s.pending += pages * times
+	return nil
+}
+
+// charge counts the pages a node produced, and ends its reservation.
 func (s *state) charge(n int) error {
-	s.pages += n
-	if s.pages > s.maxPages {
+	s.pending = 0
+	if n < 0 || n > s.maxPages-s.pages {
 		return s.budget("more than %d pages in all", s.maxPages)
 	}
+	s.pages += n
 	return nil
 }
 
@@ -197,7 +222,11 @@ func Run(ctx context.Context, w *Workflow, inputs map[string][]File, opt Options
 			in[c.TargetInput] = append(in[c.TargetInput], got...)
 		}
 		x := &exec{node: n, in: in, st: st, files: inputs[id], sec: secretsFor(opt.Secrets, id), res: res}
+		st.pending = 0
 		made, err := s.run(x)
+		if err == nil && s.category != Output {
+			err = nonEmpty(made)
+		}
 		if err == nil {
 			err = st.charge(pagesOf(made))
 		}
@@ -216,6 +245,22 @@ func fail(res *Result, n Node, s *spec, err error) (*Result, error) {
 	return res, &NodeError{ID: n.ID, Type: n.Type, Label: s.label, Err: err}
 }
 
+// nonEmpty refuses what a node made when it is no document, or a document
+// with no page: "even" on a one-page file selects nothing, and what follows
+// would have nothing to work on. BentoPDF's nodes fail the same way, with
+// "no PDF" or a page-count error, and a ZIP of nothing is no output.
+func nonEmpty(items []item) error {
+	if len(items) == 0 {
+		return errors.New("the node made no document")
+	}
+	for _, it := range items {
+		if it.doc.PageCount() == 0 {
+			return fmt.Errorf("the node made a document with no pages (%s)", cleanName(it.name))
+		}
+	}
+	return nil
+}
+
 func pagesOf(items []item) int {
 	n := 0
 	for _, it := range items {
@@ -229,7 +274,7 @@ func pagesOf(items []item) int {
 func clone(items []item, st *state) ([]item, error) {
 	out := make([]item, len(items))
 	for i, it := range items {
-		if err := st.reserve(it.doc.PageCount(), 1); err != nil {
+		if err := st.check(it.doc.PageCount(), 1); err != nil {
 			return nil, err
 		}
 		b, err := it.doc.Bytes()
@@ -258,43 +303,6 @@ func secretsFor(all map[string]map[string]string, id string) map[string]string {
 		m[k] = v
 	}
 	return m
-}
-
-// name gives every output a safe, unique file name ending in .pdf.
-func (r *Result) name() {
-	seen := map[string]bool{}
-	for i := range r.Files {
-		base := cleanName(r.Files[i].Name)
-		n := base
-		for k := 2; seen[n]; k++ {
-			n = fmt.Sprintf("%s-%d.pdf", strings.TrimSuffix(base, ".pdf"), k)
-		}
-		seen[n] = true
-		r.Files[i].Name = n
-	}
-}
-
-// cleanName keeps the last element of a name, without control characters or
-// a path, and gives it a .pdf suffix. A name is data from a file name or a
-// workflow, and ends up in an archive: it must not climb out of it.
-func cleanName(name string) string {
-	var b strings.Builder
-	for _, r := range name {
-		if r == '\\' {
-			r = '/'
-		}
-		if r >= ' ' && r != 0x7f {
-			b.WriteRune(r)
-		}
-	}
-	base := path.Base(b.String())
-	if base == "." || base == "/" || base == ".." {
-		base = "document"
-	}
-	if !strings.HasSuffix(strings.ToLower(base), ".pdf") {
-		base += ".pdf"
-	}
-	return base
 }
 
 // Encode writes the outputs the way BentoPDF's Download does: the PDF itself

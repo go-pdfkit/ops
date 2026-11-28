@@ -11,6 +11,12 @@ var seeds = []string{
 	`{"version":1,"nodes":[{"id":"a","type":"RotateNode","controls":{}},{"id":"b","type":"RotateNode","controls":{}}],"connections":[{"source":"a","target":"b"},{"source":"b","target":"a"}]}`,
 	`{"nodes":[{"id":"e","type":"EncryptNode","controls":{"userPassword":"x","k":true,"n":1.5}}],"connections":[]}`,
 	`{"nodes":[{"id":"p","type":"PosterizeNode","controls":{"rows":"8","cols":"8"}}],"connections":null}`,
+	// A one-page file through "even" selects nothing, and what follows must
+	// refuse, not panic.
+	`{"version":1,"nodes":[{"id":"i","type":"PDFInputNode"},{"id":"x","type":"ExtractPagesNode","controls":{"pages":"even"}},{"id":"m","type":"AlternateMergeNode"},{"id":"o","type":"DownloadNode"}],"connections":[{"id":"a","source":"i","sourceOutput":"pdf","target":"x","targetInput":"pdf"},{"id":"b","source":"x","sourceOutput":"pdf","target":"m","targetInput":"pdf"},{"id":"c","source":"m","sourceOutput":"pdf","target":"o","targetInput":"pdf"}]}`,
+	// Several items, and a spec that repeats pages.
+	`{"version":1,"nodes":[{"id":"i","type":"PDFInputNode"},{"id":"s","type":"SplitNode","controls":{"pages":"*,*,*,*,*,*"}},{"id":"m","type":"AlternateMergeNode"},{"id":"o","type":"DownloadNode"}],"connections":[{"id":"a","source":"i","sourceOutput":"pdf","target":"s","targetInput":"pdf"},{"id":"b","source":"s","sourceOutput":"pdf","target":"m","targetInput":"pdf"},{"id":"c","source":"m","sourceOutput":"pdf","target":"o","targetInput":"pdf"}]}`,
+	`{"nodes":[{"id":"a\nb","type":"RotateNode"}],"NODES":[],"connections":[]}`,
 }
 
 // FuzzParse: whatever the bytes are, Parse returns a workflow or an error
@@ -40,7 +46,10 @@ func FuzzCheckRun(f *testing.F) {
 	for _, s := range seeds {
 		f.Add([]byte(s))
 	}
-	pdfBytes := pdf(f, 2)
+	// Several files of one, two and three pages: one page is where "even"
+	// selects nothing, and several items are where a node that expects one
+	// breaks.
+	files := []File{{"1.pdf", pdf(f, 1)}, {"2.pdf", pdf(f, 2)}, {"3.pdf", pdf(f, 3)}}
 	f.Fuzz(func(t *testing.T, b []byte) {
 		w, err := Parse(b)
 		if err != nil {
@@ -49,7 +58,7 @@ func FuzzCheckRun(f *testing.F) {
 		Check(w)
 		in := map[string][]File{}
 		for _, n := range w.Nodes {
-			in[n.ID] = []File{{"f.pdf", pdfBytes}}
+			in[n.ID] = files
 		}
 		Run(context.Background(), w, in, Options{MaxPages: 200, MaxInputBytes: 1 << 20, MaxOutputBytes: 1 << 20})
 	})

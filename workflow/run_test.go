@@ -159,7 +159,7 @@ func TestNodeRefusals(t *testing.T) {
 			t.Errorf("%s %v: %v", c.typ, c.kv, err)
 			continue
 		}
-		if !strings.HasPrefix(err.Error(), ne.Label+" (node mid): ") || ne.Unwrap() == nil {
+		if !strings.HasPrefix(err.Error(), ne.Label+` (node "mid"): `) || ne.Unwrap() == nil {
 			t.Errorf("message %q", err)
 		}
 		if res.Status["mid"] != Failed || res.Status["out"] != Idle || len(res.Files) != 0 {
@@ -360,7 +360,7 @@ func TestDanglingNodeStaysIdle(t *testing.T) {
 
 func TestNamesAndEncode(t *testing.T) {
 	for in, want := range map[string]string{
-		"a.pdf": "a.pdf", "A.PDF": "A.PDF", "x": "x.pdf", "../../etc/passwd": "passwd.pdf", `..\..\win\a.pdf`: "a.pdf",
+		"a.pdf": "a.pdf", "A.PDF": "A.pdf", "x": "x.pdf", "../../etc/passwd": "passwd.pdf", `..\..\win\a.pdf`: "a.pdf",
 		"a\x00b\n.pdf": "ab.pdf", "": "document.pdf", "..": "document.pdf", "/": "document.pdf", "dir/": "dir.pdf", "\x7f": "document.pdf",
 	} {
 		if got := cleanName(in); got != want {

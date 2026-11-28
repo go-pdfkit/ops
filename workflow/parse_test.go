@@ -123,7 +123,7 @@ func TestIssueString(t *testing.T) {
 	if s := (Issue{Error, "", "boom"}).String(); s != "error: boom" {
 		t.Fatal(s)
 	}
-	if s := (Issue{Warning, "n1", "hm"}).String(); s != "warning: node n1: hm" {
+	if s := (Issue{Warning, "n1", "hm"}).String(); s != `warning: node "n1": hm` {
 		t.Fatal(s)
 	}
 	if HasError([]Issue{{Warning, "", ""}}) || !HasError([]Issue{{Warning, "", ""}, {Error, "", ""}}) {

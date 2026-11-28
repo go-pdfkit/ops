@@ -45,7 +45,7 @@ func TestCheckFindings(t *testing.T) {
 		{"two into one", WF([]Node{in, N("in2", "PDFInputNode"), N("m", "RotateNode"), out}, C("in", "m"), C("in2", "m"), C("m", "out")), Error, "m", "takes one connection"},
 		{"not connected", WF([]Node{in, out, N("m", "RotateNode")}, C("in", "out")), Error, "m", "is not connected"},
 		{"overlay needs both", WF([]Node{in, N("o", "OverlayNode"), out}, C("in", "o"), C("o", "out")), Error, "o", `input "overlay" is not connected`},
-		{"cycle", WF([]Node{in, out, N("a", "RotateNode"), N("b", "ReversePagesNode")}, C("in", "a"), C("a", "b"), C("b", "a"), C("a", "out")), Error, "", "cycle through: a, b"},
+		{"cycle", WF([]Node{in, out, N("a", "RotateNode"), N("b", "ReversePagesNode")}, C("in", "a"), C("a", "b"), C("b", "a"), C("a", "out")), Error, "", `cycle through: ["a" "b"`},
 		{"self loop", WF([]Node{in, out, N("a", "RotateNode")}, C("in", "a"), C("a", "a"), C("a", "out")), Error, "a", "takes one connection"},
 		{"encrypt last", WF([]Node{in, N("e", "EncryptNode"), N("r", "RotateNode"), out}, C("in", "e"), C("e", "r"), C("r", "out")), Error, "e", "Encrypt must be the last"},
 		{"dangling", WF([]Node{in, out, N("d", "RotateNode")}, C("in", "out"), C("in", "d")), Warning, "d", "does not lead to an output"},
