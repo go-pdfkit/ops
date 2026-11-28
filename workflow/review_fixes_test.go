@@ -214,6 +214,8 @@ func TestOutputNamesReservedAndNormalised(t *testing.T) {
 		"CONIN$":  "_CONIN$.pdf",
 		"conout$": "_conout$.pdf",
 		"COM⁴":    "COM⁴.pdf",
+		"1":       "1.pdf",
+		"¹":       "¹.pdf",
 	} {
 		if got := cleanName(in); got != want {
 			t.Errorf("%q -> %q, want %q", in, got, want)
