@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"version\":1,\"nodes\":[{\"id\":\"a\",\"type\":\"RotateNode\",\"controls\":{}},{\"id\":\"b\",\"type\":\"RotateNode\",\"controls\":{}}],\"connections\":[{\"source\":\"a\",\"target\":\"b\"},{\"source\":\"b\",\"target\":\"a\"}]}")

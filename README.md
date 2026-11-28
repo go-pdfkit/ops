@@ -1166,6 +1166,56 @@ flips bytes across both signed ranges, and none of the flips leaves a valid
 whole-file signature. CI installs the three tools and fails, rather than
 skips, when one is missing.
 
+## Workflows: `pdfops workflow`
+
+`pdfops workflow` runs a graph of the verbs above, the way the PDF Workflow
+Builder of [BentoPDF](https://github.com/alam00000/bentopdf) does. The file is
+BentoPDF's own JSON (`src/js/workflow/types.ts`, `SerializedWorkflow`):
+`{version, nodes:[{id,type,position,controls}], connections:[{id,source,
+sourceOutput,target,targetInput}]}`. A file exported from its editor runs here,
+for the node types both have; the Go package is `github.com/go-pdfkit/ops/workflow`.
+
+```sh
+$ pdfops workflow check flow.json
+warning: node mid: Watermark: controls not honoured here: angle, opacity
+ok: 3 nodes, 2 connections
+
+$ pdfops workflow run -o out.pdf flow.json in.pdf
+wrote out.pdf (PDF)
+
+$ pdfops workflow run -secrets pw.json -o out.zip flow.json a.pdf b.pdf
+wrote out.zip (ZIP of 2 PDFs)
+
+$ pdfops workflow nodes
+```
+
+One PDF comes out as a PDF, several as a ZIP, as BentoPDF's Download does.
+
+- **What is checked, before anything runs.** Typed sockets (PDF, MultiPDF,
+  Image), cycles, at least one input and one output node, Encrypt as the last
+  processing step, input sockets that take one connection, fan-out. A node type
+  the file uses but this build does not know is **reported by name**, never
+  dropped: BentoPDF skips it silently on load.
+- **What runs.** 29 of BentoPDF's 74 node types, in topological order, one verb
+  each (`pdfops workflow nodes` prints the table). The other 45 (the converters
+  from Word, images, e-mail and the like, OCR, digital signature, PDF to image
+  or text, colour effects, and so on) have no verb here and are refused, naming
+  the node. A control that BentoPDF has and a verb here cannot honour (a
+  watermark's opacity, say) is a warning, not silence.
+- **A failing node stops the run** and is named: `Rotate (node n3): control
+  "angle": 999 is outside -360..360`.
+- **Passwords are never in the file.** A control whose name holds `pass`,
+  `secret` or `token` is blanked when the file is read and when it is written.
+  A node that needs one (Encrypt: `userPassword`, `ownerPassword`; an input
+  of an encrypted PDF: `password`) reads it from `-secrets <file.json>`,
+  `{"nodeId":{"userPassword":"…"}}`, never from the command line; the global
+  `-password` applies to every input node.
+- **A workflow file is untrusted input.** At most 1 MiB, 256 nodes, 1024
+  connections, 64 controls of at most 1000 bytes each, a fan-out of 16; the
+  run is bounded to 20000 pages and 512 MiB in and out, counted per node, and a
+  Posterize feeding a Posterize is refused before the pages are made. The
+  parser and the validator are fuzzed, the corpus is committed.
+
 ## Marking text: `pdfops mark`
 
 `pdfops mark` writes the marks a reader makes **over** a page rather than on it

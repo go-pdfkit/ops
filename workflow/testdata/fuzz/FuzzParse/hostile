@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"nodes\":[{\"id\":\"a\",\"type\":\"t\",\"controls\":{\"k\":[1],\"z\":null}}],\"connections\":[{\"source\":\"a\"}],\"x\":1e999}")
