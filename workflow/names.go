@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // MaxNameBytes bounds the name of an output file, ".pdf" included.
@@ -48,15 +50,29 @@ func cut(s string, n int) string {
 
 // windowsReserved are the device names Windows will not let a file have,
 // with or without an extension.
-var windowsReserved = map[string]bool{"CON": true, "PRN": true, "AUX": true, "NUL": true}
+var windowsReserved = map[string]bool{"CON": true, "PRN": true, "AUX": true, "NUL": true, "CONIN$": true, "CONOUT$": true}
 
+// reserved says whether Windows takes stem for a device: the names above, and
+// COM or LPT followed by 1-9 or by a superscript 1, 2 or 3, which it also
+// treats as a digit.
 func reserved(stem string) bool {
 	first, _, _ := strings.Cut(stem, ".")
 	first = strings.ToUpper(strings.TrimRight(first, " "))
 	if windowsReserved[first] {
 		return true
 	}
-	return len(first) == 4 && (strings.HasPrefix(first, "COM") || strings.HasPrefix(first, "LPT")) && first[3] >= '1' && first[3] <= '9'
+	rest, ok := strings.CutPrefix(first, "COM")
+	if !ok {
+		rest, ok = strings.CutPrefix(first, "LPT")
+	}
+	if !ok {
+		return false
+	}
+	switch rest {
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³":
+		return true
+	}
+	return false
 }
 
 // cleanName keeps the last element of a name, without control characters, a
@@ -66,7 +82,9 @@ func reserved(stem string) bool {
 // a device.
 func cleanName(name string) string {
 	var b strings.Builder
-	for _, r := range name {
+	// NFC first: é written as one character or as e and a combining accent is
+	// one name on the file systems that normalise, so it must be one name here.
+	for _, r := range norm.NFC.String(name) {
 		switch {
 		case r == '\\':
 			b.WriteByte('/')
