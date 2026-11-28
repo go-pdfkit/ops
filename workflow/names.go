@@ -61,10 +61,14 @@ func reserved(stem string) bool {
 	if windowsReserved[first] {
 		return true
 	}
-	if !strings.HasPrefix(first, "COM") && !strings.HasPrefix(first, "LPT") {
+	rest, ok := strings.CutPrefix(first, "COM")
+	if !ok {
+		rest, ok = strings.CutPrefix(first, "LPT")
+	}
+	if !ok {
 		return false
 	}
-	switch rest := first[3:]; rest {
+	switch rest {
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³":
 		return true
 	}
