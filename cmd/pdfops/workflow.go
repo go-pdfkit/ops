@@ -3,12 +3,15 @@ package main
 import (
 	"bytes"
 	stdcontext "context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/go-pdfkit/ops/workflow"
 )
@@ -145,7 +148,10 @@ func workflowRun(c *context, args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := workflow.Run(stdcontext.Background(), w, inputs, opt)
+	// An interrupt cancels the run and the write, which removes its temporary file.
+	ctx, stop := signal.NotifyContext(stdcontext.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	res, err := workflow.Run(ctx, w, inputs, opt)
 	if err != nil {
 		return err
 	}
@@ -155,7 +161,7 @@ func workflowRun(c *context, args []string) error {
 	var buf bytes.Buffer
 	zipped, err := res.Encode(&buf)
 	if err == nil {
-		err = writeAtomic(*out, buf.Bytes())
+		err = writeAtomic(ctx, *out, buf.Bytes())
 	}
 	if err != nil {
 		return err
@@ -200,17 +206,32 @@ var maxInputBytes = workflow.DefaultMaxBytes
 // writeAtomic writes a file by renaming a finished temporary one over it, so
 // a reader never sees half a result and a symlink at path is replaced, not
 // followed to wherever it points.
-func writeAtomic(path string, b []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".pdfops-*")
+//
+// The file has the mode of the one it replaces, or else 0666 less the umask,
+// as os.Create gives; and an interrupt (ctx done) removes the temporary file.
+func writeAtomic(ctx stdcontext.Context, path string, b []byte) error {
+	f, err := createTemp(filepath.Dir(path))
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(b)
+	for len(b) > 0 && err == nil {
+		if err = ctx.Err(); err != nil {
+			break
+		}
+		n := min(len(b), writeChunk)
+		_, err = f.Write(b[:n])
+		b = b[n:]
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	if err == nil {
-		err = os.Chmod(f.Name(), 0o644)
+		if fi, serr := os.Lstat(path); serr == nil && fi.Mode().IsRegular() {
+			err = os.Chmod(f.Name(), fi.Mode().Perm())
+		}
+	}
+	if err == nil {
+		err = ctx.Err()
 	}
 	if err == nil {
 		err = os.Rename(f.Name(), path)
@@ -219,6 +240,16 @@ func writeAtomic(path string, b []byte) error {
 		os.Remove(f.Name())
 	}
 	return err
+}
+
+// writeChunk is how much is written between two looks at ctx.
+const writeChunk = 1 << 20
+
+// createTemp makes a new file next to the result, with mode 0666 so that the
+// umask decides what it ends up as.
+func createTemp(dir string) (*os.File, error) {
+	// 128 random bits: O_EXCL refuses a clash, which will not happen.
+	return os.OpenFile(filepath.Join(dir, ".pdfops-"+rand.Text()), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o666)
 }
 
 // assignInputs gives the files to the input nodes: all to the one input

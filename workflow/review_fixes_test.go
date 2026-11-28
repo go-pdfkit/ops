@@ -7,6 +7,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/go-pdfkit/ops"
 )
 
@@ -199,6 +201,28 @@ func TestOutputNames(t *testing.T) {
 			t.Fatalf("%v", r.Files)
 		}
 		seen[l] = true
+	}
+}
+
+// Superscript digits and the console devices are reserved, and a name written
+// precomposed or decomposed is one name.
+func TestOutputNamesReservedAndNormalised(t *testing.T) {
+	for in, want := range map[string]string{
+		"COM¹":    "_COM¹.pdf",
+		"lpt².x":  "_lpt².x.pdf",
+		"COM³":    "_COM³.pdf",
+		"CONIN$":  "_CONIN$.pdf",
+		"conout$": "_conout$.pdf",
+		"COM⁴":    "COM⁴.pdf",
+	} {
+		if got := cleanName(in); got != want {
+			t.Errorf("%q -> %q, want %q", in, got, want)
+		}
+	}
+	r := &Result{Files: []File{{Name: "é.pdf"}, {Name: "é.pdf"}}}
+	r.name()
+	if norm.NFC.String(strings.ToLower(r.Files[0].Name)) == norm.NFC.String(strings.ToLower(r.Files[1].Name)) {
+		t.Errorf("NFC and NFD names collide: %q", []string{r.Files[0].Name, r.Files[1].Name})
 	}
 }
 
